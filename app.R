@@ -1,6 +1,7 @@
 #install and load packages
 if (!require("pacman")) install.packages("pacman")
-pacman::p_load(tidyverse, rio, here, DT, shiny, plotly, openxlsx, countrycode, forestplot)
+pacman::p_load(tidyverse, rio, here, DT, shiny, plotly, openxlsx, countrycode, forestplot,
+               reactable, htmltools)
 
 # # Specify update dates
 # last_search <- "April 2025"
@@ -74,6 +75,7 @@ ui <- fluidPage(
         .fluid-row {
         margin-bottom: 30px;
         }
+        .reactable-table th, .reactable-table td { box-sizing: border-box !important; }
   ')
     ),
     tags$link(rel = "stylesheet", type = "text/css", href = "https://fonts.googleapis.com/css?family=Open+Sans"),
@@ -157,7 +159,7 @@ fluidRow(
          ),
          plotlyOutput("pct_fem", height = "350px")),
 ),
-### Row 3
+## Row 3
 fluidRow(
   column(12,
          div(
@@ -165,12 +167,13 @@ fluidRow(
            "Standardized Mean Difference in Depression Symptoms"
          ),
          div(
-           style = "margin-left: 10px; margin-top: 22px; font-size: 12px",
+           style = "margin-left: 10px; margin-top: 6px; font-size: 12px",
            "A negative SMD indicates an intervention benefit"
          ),
-         plotlyOutput("forest_plot")
+         reactableOutput("forest_tbl", width = "100%")
   )
-))
+)
+)
 ################################################################################################################################################################
 ################################################################################################################################################
 ################################################################################################################################################################
@@ -934,38 +937,256 @@ output$num_class_plot <- renderPlotly({
   })
   ##################################################################################
   ### Forest plot
+  # ---- Forest Plot Table: Grouped/Merged cells with hierarchical borders ----
   
-  output$forest_plot <- renderPlot({
-    se <- sqrt(df$vi)
-    df$lower <- df$yi - 1.96 * se
-    df$upper <- df$yi + 1.96 * se
-    
-    # 1. Filter out rows with missing values if needed
-    df <- df[!is.na(df$yi) & !is.na(df$study) & !is.na(df$intervention) & !is.na(df$comparison) & !is.na(df$outcome_measure) & !is.na(df$weeks), ]
-    
-    # 2. Create a "table" label for the y-axis (matching your screenshot)
-    df$label <- sprintf(
-      "%-18s %-25s %-15s %-14s %-6s %8s",
-      df$study,
-      df$intervention,
-      df$comparison,
-      df$outcome_measure,
-      format(df$weeks, justify = "right"),
-      format(round(df$yi, 3), nsmall = 3, justify = "right")
+  # ----------- GROUPING / BLANKING / BORDER LOGIC (all functions together) -----------
+  group_cols <- c("Study Author Year", "Intervention", "Comparison", "Outcome Measure")
+  
+  # Hierarchical "pivot-style" blanking for reactable/gt tables
+  blank_classic <- function(df, group_cols) {
+    df[group_cols] <- lapply(df[group_cols], as.character)
+    for (col in group_cols) {
+      # For each grouping column, blank all but the first of each consecutive block
+      df[[col]][duplicated(df[[col]]) & !is.na(df[[col]])] <- ""
+      # The above line blanks all repeated values in that column, regardless of other columns
+      # If you want to only blank when ALL grouping columns to the left are the same, use below:
+      # for (i in 2:nrow(df)) {
+      #   if (all(sapply(group_cols[1:which(group_cols == col)], function(g) df[[g]][i] == df[[g]][i-1]))) {
+      #     df[[col]][i] <- ""
+      #   }
+      # }
+    }
+    df
+  }
+  
+  # Add a borderType column for hierarchical borders in reactable
+  add_border_type <- function(df, group_cols) {
+    borderType <- rep("none", nrow(df))
+    for (i in seq_len(nrow(df))) {
+      if (i == 1) {
+        borderType[i] <- "thick"
+      } else {
+        is_diff <- any(sapply(group_cols, function(col) {
+          as.character(df[[col]][i]) != as.character(df[[col]][i-1])
+        }))
+        if (is_diff) borderType[i] <- "thick"
+      }
+    }
+    df$borderType <- borderType
+    df
+  }
+  
+  # ----------- DATA PREP -----------
+  
+  # 1. Standard errors and CIs on df
+  se <- sqrt(df$vi)
+  df$lower <- df$yi - 1.96 * se
+  df$upper <- df$yi + 1.96 * se
+  
+  # 2. Join number_participants as n
+  df_forest <- df %>%
+    left_join(
+      studies %>% select(study_author_year, number_participants),
+      by = c("study" = "study_author_year")
+    ) %>%
+    transmute(
+      `Study Author Year` = study,
+      `Intervention` = intervention,
+      `Comparison` = comparison,
+      `Outcome Measure` = outcome_measure,
+      `Weeks` = outcome_timepoint,
+      `n` = number_participants,
+      `SMD` = round(yi, 3),
+      lower = lower,
+      upper = upper
     )
+  
+  # 3. Specify grouping columns (edit as needed)
+  group_cols <- c("Study Author Year", "Intervention", "Comparison", "Outcome Measure")
+  
+  # 4. Sort & apply blanking and border logic
+  df_forest <- df_forest[do.call(order, df_forest[group_cols]), ]
+  df_forest <- blank_classic(df_forest, group_cols)
+  df_forest <- add_border_type(df_forest, group_cols)
+  
+  # ----------- FOREST SVG COLUMN -----------
+  
+  max_n <- max(df_forest$n, na.rm = TRUE)
+  bubble_radius <- function(n, min_r = 4, max_r = 16) {
+    if (is.na(n) || n <= 0) return(min_r)
+    prop <- sqrt(n / max_n)
+    r <- min_r + (max_r - min_r) * prop
+    return(r)
+  }
+  
+  make_forest_svg <- function(yi, lower, upper, n, show_axis = FALSE) {
+    min_x <- -3; max_x <- 3
+    ref_width <- 300
+    svg_height <- if (show_axis) 120 else 48
+    center_y <- svg_height / 2
     
-    # 3. Plot: Table as y-axis, bubbles for SMD
-    ggplot(df, aes(x = yi, y = reorder(label, yi))) +
-      geom_point(aes(size = abs(yi), color = yi < 0), alpha = 0.8) +
-      scale_color_manual(values = c("TRUE" = "darkgreen", "FALSE" = "yellow")) +
-      scale_size_continuous(range = c(3, 12)) +
-      geom_vline(xintercept = 0, linetype = "dashed", color = "grey40") +
-      labs(x = "SMD", y = NULL) +
-      theme_minimal(base_size = 15) +
-      theme(axis.text.y = element_text(family = "mono", size = 11, hjust = 1))
-  })  
+    max_n <-  max(df_forest$n, na.rm = TRUE)
+    bubble_radius <- function(n, min_r = 6, max_r = 18) {
+      if (is.na(n) || n <= 0) return(min_r)
+      prop <- sqrt(n / max_n)
+      r <- min_r + (max_r - min_r) * prop
+      return(r)
+    }
+    r <- bubble_radius(n)
+    
+    scale <- function(x) ref_width * (x - min_x) / (max_x - min_x)
+    
+    axis_svg <- if (show_axis) {
+      axis_y <- 55
+      tick_label_y <- 80
+      axis_label_y <- 110
+      
+      ticks <- seq(min_x, max_x, 1)
+      tick_x <- scale(ticks)
+      axis_g <- htmltools::tagList(
+        htmltools::tags$line(
+          x1 = scale(min_x), x2 = scale(max_x), y1 = axis_y, y2 = axis_y,
+          stroke = "#444", "stroke-width" = 1
+        ),
+        lapply(seq_along(tick_x), function(i) {
+          htmltools::tags$g(
+            htmltools::tags$line(
+              x1 = tick_x[i], x2 = tick_x[i], y1 = axis_y, y2 = axis_y + 12,
+              stroke = "#444", "stroke-width" = 1
+            ),
+            htmltools::tags$text(
+              x = tick_x[i], y = tick_label_y,
+              text.anchor = "middle", font.size = 13, font.family = "Arial", ticks[i]
+            )
+          )
+        }),
+        htmltools::tags$text(
+          x = ref_width / 2, y = axis_label_y,
+          "Standardized mean difference",
+          font.size = 16, font.family = "Arial", text.anchor = "middle"
+        )
+      )
+      htmltools::tags$g(axis_g)
+    } else {NULL}
+    
+    forest_geom <- if (!is.na(yi) && !is.na(lower) && !is.na(upper) && !is.na(n)) list(
+      htmltools::tags$line(
+        x1 = scale(lower), x2 = scale(upper), y1 = center_y, y2 = center_y,
+        stroke = "#333", "stroke-width" = 2
+      ),
+      htmltools::tags$circle(
+        cx = scale(yi), cy = center_y, r = r,
+        fill = ifelse(yi < 0, "#235223", "#E0C311"),
+        stroke = "#222", "stroke-width" = 1
+      )
+    ) else NULL
+    
+    as.character(
+      htmltools::tags$svg(
+        width = "100%",
+        height = svg_height,
+        viewBox = sprintf("0 0 %d %d", ref_width, svg_height),
+        preserveAspectRatio = "xMidYMid meet",
+        htmltools::tags$rect(x=0, y=0, width=ref_width, height=svg_height, fill="white"),
+        forest_geom,
+        htmltools::tags$line(x1 = scale(0), x2 = scale(0), y1 = 0, y2 = svg_height, stroke = "#888", "stroke-dasharray" = "2,2", "stroke-width" = 1),
+        axis_svg
+      )
+    )
+  }
+  
+  # ----------- FINAL ASSEMBLY & REACTABLE OUTPUT -----------
+  
+  # Add footer axis row
+  nrow_df <- nrow(df_forest)
+  forest_axis_footer <- df_forest[1, ]
+  forest_axis_footer[,] <- ""
+  forest_axis_footer$borderType <- ""
+  forest_axis_footer$` ` <- make_forest_svg(yi = NA, lower = NA, upper = NA, n = NA, show_axis = TRUE)
+  df_forest$` ` <- mapply(make_forest_svg, df_forest$SMD, df_forest$lower, df_forest$upper, df_forest$n, MoreArgs = list(show_axis = FALSE), SIMPLIFY = FALSE)
+  df_forest <- rbind(df_forest, forest_axis_footer)
+  
+  df_forest <- df_forest[, c(
+    "Study Author Year", "Intervention", "Comparison", "Outcome Measure", "Weeks", "n", "SMD", " ", "borderType"
+  )]
+  
+  output$forest_tbl <- renderReactable({
+    reactable(
+      df_forest,
+      columns = list(
+        borderType = colDef(show = FALSE),
+        `Study Author Year` = colDef(
+          name = "Study Author Year",
+          minWidth = 120,
+          maxWidth = 200,
+          style = list(whiteSpace = "pre-line", wordBreak = "break-word", fontWeight = "bold")
+        ),
+        `Intervention` = colDef(
+          name = "Intervention",
+          minWidth = 150,
+          maxWidth = 250,
+          style = list(whiteSpace = "pre-line", wordBreak = "break-word")
+        ),
+        `Comparison` = colDef(
+          name = "Comparison",
+          minWidth = 120,
+          maxWidth = 200,
+          style = list(whiteSpace = "pre-line", wordBreak = "break-word")
+        ),
+        `Outcome Measure` = colDef(
+          name = "Outcome Measure",
+          minWidth = 170,
+          maxWidth = 260,
+          style = list(whiteSpace = "pre-line", wordBreak = "break-word")
+        ),
+        Weeks = colDef(
+          name = "Weeks",
+          minWidth = 50,
+          maxWidth = 70,
+          align = "right"
+        ),
+        n = colDef(
+          name = "n",
+          minWidth = 60,
+          maxWidth = 80,
+          align = "right",
+          format = colFormat(separators = TRUE, digits = 0)
+        ),
+        SMD = colDef(
+          name = "SMD",
+          minWidth = 70,
+          maxWidth = 90,
+          align = "right",
+          format = colFormat(digits = 3)
+        ),
+        ` ` = colDef(
+          name = "",
+          html = TRUE,
+          minWidth = 300,
+          resizable = TRUE,
+          style = list(verticalAlign = "middle", textAlign = "center", padding = "0"),
+          sortable = FALSE,
+          filterable = FALSE
+        )
+      ),
+      bordered = TRUE,
+      highlight = TRUE,
+      resizable = TRUE,
+      style = list(fontFamily = "Arial, sans-serif"),
+      fullWidth = TRUE,
+      defaultPageSize = nrow(df_forest)
+    )
+  })
 }
-
-
 # Run the application 
 shinyApp(ui = ui, server = server)
+
+# 
+# studies %>% 
+#   select(study_author_year, number_participants) %>% 
+#   filter(study_author_year == "Possel 2004") %>% 
+#   print()
+# 
+# length(unique(df$study))
+# length(unique(studies$study_author_year))
+# setdiff(unique(studies$study_author_year), unique(df$study))
