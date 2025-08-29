@@ -226,48 +226,60 @@ ui <- fluidPage(
   ### Filter dropdowns
   fluidRow(
     column(4,
-           div(
-             style = "margin-left: 10px; margin-top: 22px;"
-           ),
+           div(style = "margin-left: 10px; margin-top: 22px;"),
            pickerInput(
              inputId = "country_filter",
              label = "Country",
              choices = sort(unique(merged$country)),
-             selected = sort(unique(merged$country)), # <-- select all by default
+             selected = sort(unique(merged$country)),
              multiple = TRUE,
-             options = list(`actions-box` = TRUE, `live-search` = TRUE, `selected-text-format` = "all", `count-selected-text`="All"),
+             options = list(
+               `actions-box` = TRUE,
+               `live-search` = TRUE,
+               `selected-text-format` = paste0("count > ", length(unique(merged$country)) - 1),
+               `count-selected-text` = "All"
+             ),
              width = "100%"
            )
     ),
     column(4,
-           div(
-             style = "margin-left: 10px; margin-top: 22px;"
-           ),
+           div(style = "margin-left: 10px; margin-top: 22px;"),
            pickerInput(
              inputId = "school_level_filter",
              label = "School Level",
              choices = school_level_choices,
-             selected = school_level_choices, # <-- select all by default
+             selected = school_level_choices,
              multiple = TRUE,
-             options = list(`actions-box` = TRUE, `live-search` = TRUE, `selected-text-format` = "all", `count-selected-text`="All"),
+             options = list(
+               `actions-box` = TRUE,
+               `live-search` = TRUE,
+               `selected-text-format` = paste0("count > ", length(school_level_choices) - 1),
+               `count-selected-text` = "All"
+             ),
              width = "100%"
            )
     ),
     column(4,
-           div(
-             style = "margin-left: 10px; margin-top: 22px;"
-           ),
+           div(style = "margin-left: 10px; margin-top: 22px;"),
            pickerInput(
              inputId = "urbanicity_filter",
              label = "Urbanicity",
              choices = urbanicity_choices,
-             selected = urbanicity_choices, # <-- select all by default
+             selected = urbanicity_choices,
              multiple = TRUE,
-             options = list(`actions-box` = TRUE, `live-search` = TRUE, `selected-text-format` = "all", `count-selected-text`="All"),
+             options = list(
+               `actions-box` = TRUE,
+               `live-search` = TRUE,
+               `selected-text-format` = paste0("count > ", length(urbanicity_choices) - 1),
+               `count-selected-text` = "All"
+             ),
              width = "100%"
            )
     )
   ),
+  #Tabs
+  tabsetPanel(
+    tabPanel("Visualizations",
   ### Row 1
   # Count of studies  
   fluidRow(
@@ -325,9 +337,11 @@ ui <- fluidPage(
              style = "margin-left: 10px; margin-top: 22px; font-size: 18px",
              "Female"
            ),
-           plotlyOutput("pct_fem", height = "350px")),
+           plotlyOutput("pct_fem", height = "350px"))
+)
   ),
-  ## Row 3
+  tabPanel("Forest Plot",
+
   fluidRow(
     column(12,
            div(
@@ -340,8 +354,8 @@ ui <- fluidPage(
            ),
            reactableOutput("forest_tbl", width = "100%")
     )
-  )
-)
+  ))
+))
 ################################################################################################################################################################
 ################################################################################################################################################
 ################################################################################################################################################################
@@ -352,31 +366,26 @@ ui <- fluidPage(
 # Define server logic required 
 server <- function(input, output, session) {
   
-#Filters
+  #Filters
   filtered_data <- reactive({
-    data <- merged
-    
-    # Filter by country if needed
-    if (!is.null(input$country_filter) && length(input$country_filter) > 0) {
-      data <- data %>% filter(country %in% input$country_filter)
+    # If ANY filter is empty, return empty data frame
+    if (
+      is.null(input$country_filter) || length(input$country_filter) == 0 ||
+      is.null(input$school_level_filter) || length(input$school_level_filter) == 0 ||
+      is.null(input$urbanicity_filter) || length(input$urbanicity_filter) == 0
+    ) {
+      return(merged[0,]) # empty df with correct columns
     }
     
-    # Add grade_category column
-    data <- data %>%
-      mutate(grade_category = sapply(grade_level, classify_grade_level))
-    
-    # Filter by school level if needed
-    if (!is.null(input$school_level_filter) && length(input$school_level_filter) > 0) {
-      data <- data %>% filter(grade_category %in% input$school_level_filter)
-    }
-    
-    # Filter by urbanicity if needed
-    if (!is.null(input$urbanicity_filter) && length(input$urbanicity_filter) > 0) {
-      data <- data %>% filter(urbanicity_clean %in% input$urbanicity_filter)
-    }
+    data <- merged %>%
+      mutate(grade_category = sapply(grade_level, classify_grade_level)) %>%
+      filter(country %in% input$country_filter) %>%
+      filter(grade_category %in% input$school_level_filter) %>%
+      filter(urbanicity_clean %in% input$urbanicity_filter)
     
     data
   })
+  
   
   
   # Studies panel: Number of unique studies
@@ -1138,139 +1147,202 @@ output$pct_fem <- renderPlotly({
   p
 })
   ##################################################################################
-  ### Forest plot
-  # ---- Forest Plot Table: Grouped/Merged cells with hierarchical borders ----
+### Forest plot
+# NEW: Forest plot data filtered
+filtered_merged_forest <- reactive({
+  # Get filtered merged
+  filtered <- filtered_data()
+  if (nrow(filtered) == 0) {
+    # Return empty forest table with same columns as merged
+    tibble(
+      `Study Author Year` = character(),
+      `Intervention` = character(),
+      `Comparison` = character(),
+      `Outcome Measure` = character(),
+      `Weeks` = character(),
+      `n` = numeric(),
+      `SMD` = numeric(),
+      lower = numeric(),
+      upper = numeric()
+    )
+  } else {
+    se <- sqrt(filtered$vi)
+    filtered$lower <- filtered$yi - 1.96 * se
+    filtered$upper <- filtered$yi + 1.96 * se
+    filtered_forest <- filtered %>%
+      transmute(
+        `Study Author Year` = study,
+        `Intervention` = intervention,
+        `Comparison` = comparison,
+        `Outcome Measure` = outcome_measure,
+        `Weeks` = as.character(outcome_timepoint),
+        `n` = number_participants,
+        `SMD` = round(yi, 3),
+        lower = lower,
+        upper = upper
+      )
+    filtered_forest
+  }
+})
+
+# ----------- HIERARCHICAL BLANKING FUNCTION -----------
+hierarchical_blanker <- function(merged, group_cols) {
+  n <- nrow(merged)
+  if (n < 2) return(merged)
+  original <- merged # keep original for comparison!
   
-  # ----------- GROUPING / BLANKING / BORDER LOGIC (all functions together) -----------
-  group_cols <- c("Study Author Year", "Intervention", "Comparison", "Outcome Measure")
+  # Add border indicator
+  merged$border_top <- FALSE
   
-  # Hierarchical "pivot-style" blanking for reactable/gt tables
-  # Hierarchical "pivot-style" blanking for reactable/gt tables
-  # Hierarchical "pivot-style" blanking for reactable/gt tables
-  hierarchical_blanker <- function(df, group_cols) {
-    n <- nrow(df)
-    if (n < 2) return(df)
-    # For each row after the first...
-    for (i in 2:n) {
+  for (i in 2:n) {
+    first_diff_col <- NA
+    for (col_idx in seq_along(group_cols)) {
+      col <- group_cols[col_idx]
+      if (!identical(original[[col]][i], original[[col]][i-1])) {
+        first_diff_col <- col_idx
+        break
+      }
+    }
+    
+    # Check if Study Author Year changed (first column)
+    if (!is.na(first_diff_col) && first_diff_col == 1) {
+      merged$border_top[i] <- TRUE
+    }
+    
+    if (is.na(first_diff_col)) {
       for (col_idx in seq_along(group_cols)) {
         col <- group_cols[col_idx]
-        # If any previous grouping column differs, stop blanking this row for higher columns
-        if (any(sapply(group_cols[1:(col_idx-1)], function(pc) !identical(df[[pc]][i], df[[pc]][i-1])))) {
-          break
-        }
-        # If this value is the same as in the previous row, blank it
-        if (identical(df[[col]][i], df[[col]][i-1])) {
-          df[[col]][i] <- ""
+        merged[[col]][i] <- ""
+      }
+    } else {
+      if (first_diff_col > 1) {
+        for (col_idx in 1:(first_diff_col-1)) {
+          col <- group_cols[col_idx]
+          merged[[col]][i] <- ""
         }
       }
+      # Changed column and those to the right: keep as is
     }
-    df
+  }
+  merged
+}
+
+# ----------- FUNCTION TO ESTIMATE ROW HEIGHT BASED ON TEXT CONTENT -----------
+estimate_row_height <- function(merged_forest) {
+  if (nrow(merged_forest) == 0) return(70)
+  
+  # Function to estimate text height based on character count and column width
+  estimate_text_height <- function(text, col_width_chars, base_font_size = 13) {
+    if (is.na(text) || text == "") return(1)
+    
+    char_count <- nchar(as.character(text))
+    # Estimate characters per line based on column width
+    chars_per_line <- max(1, floor(col_width_chars * 0.8))  # Conservative estimate
+    lines_needed <- ceiling(char_count / chars_per_line)
+    
+    # Add extra lines for natural word wrapping
+    if (grepl(" ", text) && char_count > chars_per_line) {
+      lines_needed <- lines_needed + 1
+    }
+    
+    return(lines_needed)
   }
   
-  # Add a borderType column for hierarchical borders in reactable
-  add_border_type <- function(merged, group_cols) {
-    borderType <- rep("none", nrow(merged))
-    for (i in seq_len(nrow(merged))) {
-      if (i == 1) {
-        borderType[i] <- "thick"
-      } else {
-        is_diff <- any(sapply(group_cols, function(col) {
-          as.character(merged[[col]][i]) != as.character(merged[[col]][i-1])
-        }))
-        if (is_diff) borderType[i] <- "thick"
+  # Column width estimates (in characters, roughly)
+  col_widths <- list(
+    "Study Author Year" = 25,
+    "Intervention" = 30,
+    "Comparison" = 25,
+    "Outcome Measure" = 35,
+    "Weeks" = 8,
+    "SMD" = 8
+  )
+  
+  max_lines_per_row <- numeric(nrow(merged_forest))
+  
+  for (i in 1:nrow(merged_forest)) {
+    row_max_lines <- 1
+    
+    for (col_name in names(col_widths)) {
+      if (col_name %in% names(merged_forest)) {
+        text_lines <- estimate_text_height(
+          merged_forest[[col_name]][i], 
+          col_widths[[col_name]]
+        )
+        row_max_lines <- max(row_max_lines, text_lines)
       }
     }
-    merged$borderType <- borderType
-    merged
+    
+    max_lines_per_row[i] <- row_max_lines
   }
   
-  # ----------- DATA PREP -----------
+  # Calculate height: base height + (extra lines * line height)
+  base_height <- 8
+  line_height <- 11
+  max_lines <- max(max_lines_per_row)
   
-  # 1. Standard errors and CIs on merged
-  se <- sqrt(merged$vi)
-  merged$lower <- merged$yi - 1.96 * se
-  merged$upper <- merged$yi + 1.96 * se
+  return(base_height + ((max_lines - 1) * line_height))
+}
+
+# ----------- FOREST SVG FUNCTION -----------
+# ----------- FOREST SVG FUNCTION -----------
+make_forest_svg <- function(yi, lower, upper, n, max_n = NULL, row_height = 70, show_axis = FALSE) {
+  min_x <- -3.5; max_x <- 3.5
+  ref_width <- 500  # Changed from 1200 to match your SVG width preference
+  svg_height <- if (show_axis) 160 else row_height
+  center_y <- svg_height / 2
   
-  # 2. Join number_participants as n
-  merged_forest <- merged %>%
-    transmute(
-      `Study Author Year` = study,
-      `Intervention` = intervention,
-      `Comparison` = comparison,
-      `Outcome Measure` = outcome_measure,
-      `Weeks` = outcome_timepoint,
-      `n` = number_participants,
-      `SMD` = round(yi, 3),
-      lower = lower,
-      upper = upper
-    )
-  
-  # 4. Sort & apply blanking and border logic
-  merged_forest <- merged_forest[do.call(order, merged_forest[group_cols]), ]
-  merged_forest <- hierarchical_blanker(merged_forest, group_cols)
-  merged_forest <- add_border_type(merged_forest, group_cols)
-  
-  # ----------- FOREST SVG COLUMN -----------
-  
-  max_n <- max(merged_forest$n, na.rm = TRUE)
-  bubble_radius <- function(n, min_r = 4, max_r = 16) {
-    if (is.na(n) || n <= 0) return(min_r)
+  bubble_radius <- function(n, min_r = 4, max_r = 12) {
+    if (is.na(n) || n <= 0 || is.na(max_n) || max_n == 0) return(min_r)
     prop <- sqrt(n / max_n)
     r <- min_r + (max_r - min_r) * prop
     return(r)
   }
+  r <- bubble_radius(n)
   
-  make_forest_svg <- function(yi, lower, upper, n, show_axis = FALSE) {
-    min_x <- -3.5; max_x <- 3.5
-    ref_width <- 1200
-    svg_height <- if (show_axis) 120 else 48
-    center_y <- svg_height / 2
+  scale <- function(x) ref_width * (x - min_x) / (max_x - min_x)
+  
+  axis_svg <- if (show_axis) {
+    axis_y <- 60
+    tick_label_y <- 90
+    axis_label_y <- 135
     
-    max_n <-  max(merged_forest$n, na.rm = TRUE)
-    bubble_radius <- function(n, min_r = 6, max_r = 18) {
-      if (is.na(n) || n <= 0) return(min_r)
-      prop <- sqrt(n / max_n)
-      r <- min_r + (max_r - min_r) * prop
-      return(r)
-    }
-    r <- bubble_radius(n)
-    
-    scale <- function(x) ref_width * (x - min_x) / (max_x - min_x)
-    
-    axis_svg <- if (show_axis) {
-      axis_y <- 55
-      tick_label_y <- 80
-      axis_label_y <- 110
-      
-      ticks <- seq(-3, 3, by =1)
-      tick_x <- scale(ticks)
-      axis_g <- htmltools::tagList(
-        htmltools::tags$line(
-          x1 = scale(min_x), x2 = scale(max_x), y1 = axis_y, y2 = axis_y,
-          stroke = "#444", "stroke-width" = 1
-        ),
-        lapply(seq_along(tick_x), function(i) {
-          htmltools::tags$g(
-            htmltools::tags$line(
-              x1 = tick_x[i], x2 = tick_x[i], y1 = axis_y, y2 = axis_y + 12,
-              stroke = "#444", "stroke-width" = 1
-            ),
-            htmltools::tags$text(
-              x = tick_x[i], y = tick_label_y,
-              text.anchor = "middle", font.size = 13, font.family = "Arial", ticks[i]
-            )
+    ticks <- seq(-3, 3, by = 1)
+    tick_x <- scale(ticks)
+    axis_g <- htmltools::tagList(
+      htmltools::tags$line(
+        x1 = scale(min_x), x2 = scale(max_x), y1 = axis_y, y2 = axis_y,
+        stroke = "#444", "stroke-width" = 2
+      ),
+      lapply(seq_along(tick_x), function(i) {
+        htmltools::tags$g(
+          htmltools::tags$line(
+            x1 = tick_x[i], x2 = tick_x[i], y1 = axis_y, y2 = axis_y + 15,
+            stroke = "#444", "stroke-width" = 2
+          ),
+          htmltools::tags$text(
+            x = tick_x[i], y = tick_label_y,
+            text.anchor = "middle", font.size = 18, font.family = "Arial",
+            fill = "#333", font.weight = "bold", ticks[i]
           )
-        }),
-        htmltools::tags$text(
-          x = ref_width / 2, y = axis_label_y,
-          "Standardized mean difference",
-          font.size = 20, font.family = "Arial", text.anchor = "middle"
         )
+      }),
+      htmltools::tags$text(
+        x = ref_width / 2, y = axis_label_y,
+        "Standardized Mean Difference",
+        font.size = 20, font.family = "Arial", text.anchor = "middle",
+        fill = "#333", font.weight = "bold"
       )
-      htmltools::tags$g(axis_g)
-    } else {NULL}
-    
-    forest_geom <- if (!is.na(yi) && !is.na(lower) && !is.na(upper) && !is.na(n)) list(
+    )
+    htmltools::tags$g(axis_g)
+  } else {
+    NULL  # Changed from {NULL} to NULL
+  }
+  
+  # Initialize forest_geom as NULL first, then conditionally populate
+  forest_geom <- NULL
+  if (!is.na(yi) && !is.na(lower) && !is.na(upper) && !is.na(n)) {
+    forest_geom <- list(
       htmltools::tags$line(
         x1 = scale(lower), x2 = scale(upper), y1 = center_y, y2 = center_y,
         stroke = "#333", "stroke-width" = 2
@@ -1282,107 +1354,220 @@ output$pct_fem <- renderPlotly({
                              "#B0B0B0")),           # grey if between
         stroke = "#222", "stroke-width" = 1
       )
-    ) else NULL
-    
-    as.character(
-      htmltools::tags$svg(
-        width = "100%",
-        height = svg_height,
-        viewBox = sprintf("0 0 %d %d", ref_width, svg_height),
-        preserveAspectRatio = "xMidYMid meet",
-        htmltools::tags$rect(x=0, y=0, width=ref_width, height=svg_height, fill="white"),
-        forest_geom,
-        htmltools::tags$line(x1 = scale(0), x2 = scale(0), y1 = 0, y2 = svg_height, stroke = "#888", "stroke-dasharray" = "2,2", "stroke-width" = 1),
-        axis_svg
-      )
     )
   }
   
-  # ----------- FINAL ASSEMBLY & REACTABLE OUTPUT -----------
-  
-  # Add footer axis row
-  nrow_merged <- nrow(merged_forest)
-  forest_axis_footer <- merged_forest[1, ]
-  forest_axis_footer[,] <- ""
-  forest_axis_footer$borderType <- ""
-  forest_axis_footer$` ` <- make_forest_svg(yi = NA, lower = NA, upper = NA, n = NA, show_axis = TRUE)
-  merged_forest$` ` <- mapply(make_forest_svg, merged_forest$SMD, merged_forest$lower, merged_forest$upper, merged_forest$n, MoreArgs = list(show_axis = FALSE), SIMPLIFY = FALSE)
-  merged_forest <- rbind(merged_forest, forest_axis_footer)
-  
-  merged_forest <- merged_forest[, c(
-    "Study Author Year", "Intervention", "Comparison", "Outcome Measure", "Weeks", "SMD", " ", "borderType"
-  )]
-  
-  rownames(merged_forest) <- NULL
-  is_group_start <- function(value, index, column, data) {
-    if (index == 1) return(TRUE)
-    !identical(data[[column]][index], data[[column]][index - 1])
-  }
-  
-  output$forest_tbl <- renderReactable({
-    reactable(
-      merged_forest,
-      columns = list(
-        borderType = colDef(show = FALSE),
-        `Study Author Year` = colDef(
-          name = "Study Author Year",
-          minWidth = 120,
-          maxWidth = 200,
-          style = list(whiteSpace = "pre-line", wordBreak = "break-word", fontWeight = "bold")
-        ),
-        `Intervention` = colDef(
-          name = "Intervention",
-          minWidth = 150,
-          maxWidth = 250,
-          style = list(whiteSpace = "pre-line", wordBreak = "break-word")
-        ),
-        `Comparison` = colDef(
-          name = "Comparison",
-          minWidth = 120,
-          maxWidth = 200,
-          style = list(whiteSpace = "pre-line", wordBreak = "break-word")
-        ),
-        `Outcome Measure` = colDef(
-          name = "Outcome Measure",
-          minWidth = 170,
-          maxWidth = 260,
-          style = list(whiteSpace = "pre-line", wordBreak = "break-word")
-        ),
-        Weeks = colDef(
-          name = "Weeks",
-          minWidth = 50,
-          maxWidth = 70,
-          align = "right",
-          style = list(borderTop = "2px solid #222")
-        ),
-        SMD = colDef(
-          name = "SMD",
-          minWidth = 70,
-          maxWidth = 90,
-          align = "right",
-          format = colFormat(digits = 3),
-          style = list(borderTop = "2px solid #222")
-        ),
-        ` ` = colDef(
-          name = "",
-          html = TRUE,
-          minWidth = 700,
-          resizable = TRUE,
-          style = list(verticalAlign = "middle", textAlign = "center", padding = "0", borderTop = "2px solid #222"),
-          sortable = FALSE,
-          filterable = FALSE,
-        )
-      ),
-      bordered = TRUE,
-      highlight = TRUE,
-      resizable = TRUE,
-      style = list(fontFamily = "Arial, sans-serif"),
-      fullWidth = TRUE,
-      defaultPageSize = nrow(merged_forest)
+  as.character(
+    htmltools::tags$svg(
+      width = "100%",
+      height = svg_height,
+      viewBox = sprintf("0 0 %d %d", ref_width, svg_height),
+      preserveAspectRatio = "xMidYMid meet",
+      htmltools::tags$rect(x=0, y=0, width=ref_width, height=svg_height, fill="white"),
+      forest_geom,
+      htmltools::tags$line(x1 = scale(0), x2 = scale(0), y1 = 0, y2 = svg_height, stroke = "#888", "stroke-dasharray" = "2,2", "stroke-width" = 1),
+      axis_svg
     )
-  })
+  )
 }
 
+# ----------- FINAL ASSEMBLY & REACTABLE OUTPUT FOR FILTERED FOREST -----------
+output$forest_tbl <- renderReactable({
+  merged_forest <- filtered_merged_forest()
+  
+  # Calculate row height and max_n for bubble sizing
+  max_n <- if (nrow(merged_forest) > 0) max(merged_forest$n, na.rm = TRUE) else 100
+  
+  if (nrow(merged_forest) == 0) {
+    # Empty table - create a minimal structure
+    merged_forest <- tibble(
+      `Study Author Year` = "",
+      `Intervention` = "",
+      `Comparison` = "",
+      `Outcome Measure` = "",
+      `Weeks` = "",
+      `SMD` = "",
+      ` ` = "",
+      border_top = FALSE
+    )
+    row_height <- 30
+  } else {
+    # Sort and apply hierarchical blanking
+    group_cols <- c("Study Author Year", "Intervention", "Comparison", "Outcome Measure")
+    merged_forest <- merged_forest[do.call(order, merged_forest[group_cols]), ]
+    merged_forest <- hierarchical_blanker(merged_forest, group_cols)
+    
+    # Calculate optimal row height based on content
+    row_height <- estimate_row_height(merged_forest)
+    
+    # Add the forest plot SVG column for data rows
+    merged_forest$` ` <- mapply(
+      make_forest_svg,
+      merged_forest$SMD,
+      merged_forest$lower,
+      merged_forest$upper,
+      merged_forest$n,
+      max_n,
+      row_height,
+      FALSE,
+      SIMPLIFY = TRUE
+    )
+    
+    # Select final columns for display and format SMD column
+    merged_forest <- merged_forest %>%
+      mutate(
+        `SMD` = as.character(`SMD`)
+      ) %>%
+      select(`Study Author Year`, `Intervention`, `Comparison`, `Outcome Measure`, `Weeks`, `SMD`, ` `, border_top)
+  }
+  
+  # ALWAYS add axis row at the bottom
+  forest_axis_footer <- tibble(
+    `Study Author Year` = "",
+    `Intervention` = "",
+    `Comparison` = "",
+    `Outcome Measure` = "",
+    `Weeks` = "",
+    `SMD` = "",
+    ` ` = make_forest_svg(NA, NA, NA, NA, max_n, 160, show_axis = TRUE),
+    border_top = TRUE  # Add border above the axis
+  )
+  
+  merged_forest <- bind_rows(merged_forest, forest_axis_footer)
+  
+  reactable(
+    merged_forest,
+    columns = list(
+      `Study Author Year` = colDef(
+        name = "Study Author Year", 
+        minWidth = 180,  # Increased for longer text
+        style = function(value, index) {
+          style_list <- list()
+          if (!is.null(merged_forest$border_top) && merged_forest$border_top[index]) {
+            style_list$borderTop <- "2px solid #ccc"  # Your preferred border
+          }
+          style_list
+        },
+        headerStyle = list(
+          borderBottom = "3px solid #333",  # Thick border under header
+          borderTop = "3px solid #333"      # Thick border on top of header
+        )
+      ),
+      `Intervention` = colDef(
+        name = "Intervention", 
+        minWidth = 200,  # Increased for longer text
+        style = function(value, index) {
+          style_list <- list()
+          if (!is.null(merged_forest$border_top) && merged_forest$border_top[index]) {
+            style_list$borderTop <- "2px solid #ccc"
+          }
+          style_list
+        },
+        headerStyle = list(
+          borderBottom = "3px solid #333",
+          borderTop = "3px solid #333"
+        )
+      ),
+      `Comparison` = colDef(
+        name = "Comparison", 
+        minWidth = 150,  # Increased for longer text
+        style = function(value, index) {
+          style_list <- list()
+          if (!is.null(merged_forest$border_top) && merged_forest$border_top[index]) {
+            style_list$borderTop <- "2px solid #ccc"
+          }
+          style_list
+        },
+        headerStyle = list(
+          borderBottom = "3px solid #333",
+          borderTop = "3px solid #333"
+        )
+      ),
+      `Outcome Measure` = colDef(
+        name = "Outcome Measure", 
+        minWidth = 220,  # Increased for longer text
+        style = function(value, index) {
+          style_list <- list()
+          if (!is.null(merged_forest$border_top) && merged_forest$border_top[index]) {
+            style_list$borderTop <- "2px solid #ccc"
+          }
+          style_list
+        },
+        headerStyle = list(
+          borderBottom = "3px solid #333",
+          borderTop = "3px solid #333"
+        )
+      ),
+      `Weeks` = colDef(
+        name = "Weeks", 
+        minWidth = 80,
+        style = function(value, index) {
+          style_list <- list()
+          if (!is.null(merged_forest$border_top) && merged_forest$border_top[index]) {
+            style_list$borderTop <- "2px solid #ccc"
+          }
+          style_list
+        },
+        headerStyle = list(
+          borderBottom = "3px solid #333",
+          borderTop = "3px solid #333"
+        )
+      ),
+      `SMD` = colDef(
+        name = "SMD", 
+        minWidth = 80,
+        style = function(value, index) {
+          style_list <- list()
+          if (!is.null(merged_forest$border_top) && merged_forest$border_top[index]) {
+            style_list$borderTop <- "2px solid #ccc"
+          }
+          style_list
+        },
+        headerStyle = list(
+          borderBottom = "3px solid #333",
+          borderTop = "3px solid #333"
+        )
+      ),
+      ` ` = colDef(
+        name = " ", 
+        html = TRUE, 
+        minWidth = 500,  # Your preferred SVG width
+        style = function(value, index) {
+          style_list <- list()
+          if (!is.null(merged_forest$border_top) && merged_forest$border_top[index]) {
+            style_list$borderTop <- "2px solid #ccc"
+          }
+          style_list
+        },
+        headerStyle = list(
+          borderBottom = "3px solid #333",
+          borderTop = "3px solid #333"
+        )
+      ),
+      border_top = colDef(show = FALSE)
+    ),
+    bordered = TRUE,
+    highlight = TRUE,
+    resizable = TRUE,
+    style = list(
+      fontFamily = "Arial, sans-serif",
+      fontSize = "13px"
+    ),
+    rowStyle = function(index) {
+      # Check if this is the axis row (last row)
+      is_axis_row <- index == nrow(merged_forest)
+      
+      if (is_axis_row) {
+        list(height = "160px")  # Larger height for axis row
+      } else {
+        list(height = paste0(row_height, "px"))  # Auto-fitted height based on content
+      }
+    },
+    fullWidth = TRUE,
+    defaultPageSize = nrow(merged_forest)
+  )
+})
+}
 # Run the application 
 shinyApp(ui = ui, server = server)
 
