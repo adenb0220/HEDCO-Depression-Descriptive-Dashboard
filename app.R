@@ -61,6 +61,9 @@ print(no_match_df)
 print("Studies in studies file not matched in df:")
 print(no_match_studies)
 
+GLOBAL_MAX_N <- max(merged$number_participants, na.rm = TRUE)
+
+
 ###########################
 # Grade level creation
 classify_grade_level <- function(x) {
@@ -190,15 +193,64 @@ ui <- fluidPage(
         .fluid-row {
         margin-bottom: 30px;
         }
-        .reactable-table th, .reactable-table td { box-sizing: border-box !important;
+        .reactable-table th, .reactable-table td { 
+          box-sizing: border-box !important;
         }
         .reactable-table td svg {
-        width: 100% !important;
-        height: auto !important;
-        aspect-ratio: 12 / 1 !important; /* adjust to your viewBox ratio */
-        max-width: 100% !important;
-        display: block;
-      }
+          width: 100% !important;
+          height: auto !important;
+          aspect-ratio: 12 / 1 !important;
+          max-width: 100% !important;
+          display: block;
+        }
+        .reactable thead th {
+          position: sticky;
+          top: 0;
+          background-color: #fff;
+          z-index: 2;
+        }
+        
+        /* Make reactable container allow overflow for tooltips */
+        .reactable {
+          overflow: visible !important;
+        }
+        
+        .reactable-table {
+          overflow: visible !important;
+        }
+        
+        /* Custom tooltip that floats on top of everything */
+        .forest-tooltip {
+          position: relative;
+        }
+        
+        .forest-tooltip .tooltip-content {
+          visibility: hidden;
+          position: fixed;
+          background: white;
+          color: black;
+          padding: 12px 16px;
+          border-radius: 8px;
+          border: 2px solid #333;
+          font-size: 13px;
+          line-height: 1.5;
+          font-family: "Source Sans", sans-serif;
+          z-index: 999999;
+          box-shadow: 0 8px 24px rgba(0,0,0,0.5);
+          max-width: 600px;
+          min-width: 450px;
+          width: auto;
+          word-wrap: break-word;
+          white-space: normal;
+          opacity: 0;
+          transition: opacity 0.2s ease-in-out;
+          pointer-events: none;
+        }
+        
+        .forest-tooltip:hover .tooltip-content {
+          visibility: visible;
+          opacity: 1;
+        }
   ')
     ),
     tags$link(rel = "stylesheet", type = "text/css", href = "https://fonts.googleapis.com/css?family=Open+Sans"),
@@ -211,6 +263,53 @@ ui <- fluidPage(
         gtag("config", "G-8W2N0L5B8P");
       </script>')
   ),
+  
+  HTML('
+<script>
+document.addEventListener("DOMContentLoaded", function() {
+  let currentTooltip = null;
+  
+  document.addEventListener("mouseover", function(e) {
+    if (e.target.closest(".forest-tooltip")) {
+      const tooltip = e.target.closest(".forest-tooltip").querySelector(".tooltip-content");
+      if (tooltip) {
+        currentTooltip = tooltip;
+        updateTooltipPosition(e, tooltip);
+      }
+    }
+  });
+  
+  document.addEventListener("mousemove", function(e) {
+    if (currentTooltip) {
+      updateTooltipPosition(e, currentTooltip);
+    }
+  });
+  
+  document.addEventListener("mouseout", function(e) {
+    if (!e.target.closest(".forest-tooltip")) {
+      currentTooltip = null;
+    }
+  });
+  
+  function updateTooltipPosition(e, tooltip) {
+    const rect = tooltip.getBoundingClientRect();
+    let x = e.clientX + 15;
+    let y = e.clientY + 10;
+    
+    // Adjust if tooltip would go off screen
+    if (x + rect.width > window.innerWidth) {
+      x = e.clientX - rect.width - 15;
+    }
+    if (y + rect.height > window.innerHeight) {
+      y = e.clientY - rect.height - 10;
+    }
+    
+    tooltip.style.left = x + "px";
+    tooltip.style.top = y + "px";
+  }
+});
+</script>
+'),
   ################################################################################################################################################
   ################################################################################################################################################
   ################################################################################################################################################
@@ -1146,7 +1245,7 @@ output$pct_fem <- renderPlotly({
     config(displayModeBar = FALSE)
   p
 })
-  ##################################################################################
+###################################################################################
 ### Forest plot
 # NEW: Forest plot data filtered
 filtered_merged_forest <- reactive({
@@ -1284,15 +1383,15 @@ estimate_row_height <- function(merged_forest) {
   return(base_height + ((max_lines - 1) * line_height))
 }
 
-# ----------- FOREST SVG FUNCTION -----------
-# ----------- FOREST SVG FUNCTION -----------
-make_forest_svg <- function(yi, lower, upper, n, max_n = NULL, row_height = 70, show_axis = FALSE) {
+# ----------- FOREST SVG FUNCTION WITH STYLED HOVER WRAPPER -----------
+# ----------- FOREST SVG FUNCTION WITH FLOATING TOOLTIP -----------
+make_forest_svg <- function(yi, lower, upper, n, max_n = NULL, row_height = 70, show_axis = FALSE, tooltip_html = NULL) {
   min_x <- -3.5; max_x <- 3.5
-  ref_width <- 500  # Changed from 1200 to match your SVG width preference
+  ref_width <- 500
   svg_height <- if (show_axis) 160 else row_height
   center_y <- svg_height / 2
   
-  bubble_radius <- function(n, min_r = 4, max_r = 12) {
+  bubble_radius <- function(n, min_r = 2, max_r = 8) {
     if (is.na(n) || n <= 0 || is.na(max_n) || max_n == 0) return(min_r)
     prop <- sqrt(n / max_n)
     r <- min_r + (max_r - min_r) * prop
@@ -1336,17 +1435,19 @@ make_forest_svg <- function(yi, lower, upper, n, max_n = NULL, row_height = 70, 
     )
     htmltools::tags$g(axis_g)
   } else {
-    NULL  # Changed from {NULL} to NULL
+    NULL
   }
   
   # Initialize forest_geom as NULL first, then conditionally populate
   forest_geom <- NULL
   if (!is.na(yi) && !is.na(lower) && !is.na(upper) && !is.na(n)) {
     forest_geom <- list(
+      # Confidence interval line
       htmltools::tags$line(
         x1 = scale(lower), x2 = scale(upper), y1 = center_y, y2 = center_y,
         stroke = "#333", "stroke-width" = 2
       ),
+      # Point estimate circle
       htmltools::tags$circle(
         cx = scale(yi), cy = center_y, r = r,
         fill = ifelse(yi < -0.03, "#235223",        # green if less than -0.03
@@ -1357,7 +1458,8 @@ make_forest_svg <- function(yi, lower, upper, n, max_n = NULL, row_height = 70, 
     )
   }
   
-  as.character(
+  # Create the SVG content
+  svg_content <- as.character(
     htmltools::tags$svg(
       width = "100%",
       height = svg_height,
@@ -1369,17 +1471,31 @@ make_forest_svg <- function(yi, lower, upper, n, max_n = NULL, row_height = 70, 
       axis_svg
     )
   )
+  
+  # Wrap with floating tooltip if provided
+  if (!is.null(tooltip_html) && tooltip_html != "") {
+    return(sprintf(
+      '<div class="forest-tooltip" style="cursor: pointer; height: 100%%; position: relative;">
+        %s
+        <div class="tooltip-content" id="tooltip-%s">%s</div>
+      </div>', 
+      svg_content, 
+      sample(1:999999, 1), # Random ID to avoid conflicts
+      tooltip_html
+    ))
+  } else {
+    return(svg_content)
+  }
 }
 
 # ----------- FINAL ASSEMBLY & REACTABLE OUTPUT FOR FILTERED FOREST -----------
+# ----------- FINAL ASSEMBLY & REACTABLE OUTPUT FOR FILTERED FOREST -----------
 output$forest_tbl <- renderReactable({
   merged_forest <- filtered_merged_forest()
-  
-  # Calculate row height and max_n for bubble sizing
-  max_n <- if (nrow(merged_forest) > 0) max(merged_forest$n, na.rm = TRUE) else 100
+  max_n <- GLOBAL_MAX_N 
   
   if (nrow(merged_forest) == 0) {
-    # Empty table - create a minimal structure
+    # Empty case - create placeholder
     merged_forest <- tibble(
       `Study Author Year` = "",
       `Intervention` = "",
@@ -1387,21 +1503,68 @@ output$forest_tbl <- renderReactable({
       `Outcome Measure` = "",
       `Weeks` = "",
       `SMD` = "",
-      ` ` = "",
+      ` ` = list(""),
       border_top = FALSE
     )
     row_height <- 30
   } else {
-    # Sort and apply hierarchical blanking
+    # SINGLE ROW PROTECTION: Add border_top column first, before any operations
+    merged_forest$border_top <- FALSE
+    
+    # Sort only if more than 1 row
     group_cols <- c("Study Author Year", "Intervention", "Comparison", "Outcome Measure")
-    merged_forest <- merged_forest[do.call(order, merged_forest[group_cols]), ]
+    if (nrow(merged_forest) > 1) {
+      merged_forest <- merged_forest[do.call(order, merged_forest[group_cols]), ]
+    }
+    
+    # CRITICAL: Store original data BEFORE hierarchical blanking
+    original_forest_pre_blank <- merged_forest
+    
+    # Apply hierarchical blanking (safe for single rows)
     merged_forest <- hierarchical_blanker(merged_forest, group_cols)
     
-    # Calculate optimal row height based on content
+    # Calculate row height
     row_height <- estimate_row_height(merged_forest)
     
-    # Add the forest plot SVG column for data rows
-    merged_forest$` ` <- mapply(
+    # Create HTML tooltip text using ORIGINAL data (before blanking)
+    tooltip_html_texts <- sapply(1:nrow(merged_forest), function(i) {
+      # Use original data before blanking for tooltip content
+      orig_data <- original_forest_pre_blank[i, ]
+      
+      if (is.na(orig_data$SMD) || orig_data$SMD == "" || is.na(orig_data$n)) {
+        return("")
+      }
+      
+      # Calculate effect size
+      smd_val <- as.numeric(orig_data$SMD)
+      effect_size <- if (abs(smd_val) >= 2) {
+        "Very Large"
+      } else if (abs(smd_val) >= 1) {
+        "Large"
+      } else if (abs(smd_val) >= 0.5) {
+        "Medium"
+      } else if (abs(smd_val) >= 0.2) {
+        "Small"
+      } else {
+        "Very Small/Null"
+      }
+      
+      # Create HTML tooltip with bolded values - using original (non-blanked) data
+      paste(
+        paste0("Study: <b>", orig_data$`Study Author Year`, "</b>"),
+        paste0("Intervention: <b>", orig_data$Intervention, "</b>"),
+        paste0("Comparison (group): <b>", orig_data$Comparison, "</b>"),
+        paste0("Outcome Measure: <b>", orig_data$`Outcome Measure`, "</b>"),
+        paste0("Weeks: <b>", orig_data$Weeks, "</b>"),
+        paste0("SMD: <b>", orig_data$SMD, "</b>"),
+        paste0("n: <b>", orig_data$n, "</b>"),
+        paste0("Effect size: <b>", effect_size, "</b>"),
+        sep = "<br>"
+      )
+    })
+    
+    # CRITICAL: Always create SVG as list-column, protect against simplification
+    svg_list <- mapply(
       make_forest_svg,
       merged_forest$SMD,
       merged_forest$lower,
@@ -1410,18 +1573,25 @@ output$forest_tbl <- renderReactable({
       max_n,
       row_height,
       FALSE,
-      SIMPLIFY = TRUE
+      tooltip_html_texts,  # Pass HTML tooltip text based on original data
+      SIMPLIFY = FALSE  # NEVER simplify to avoid vector conversion
     )
     
-    # Select final columns for display and format SMD column
-    merged_forest <- merged_forest %>%
-      mutate(
-        `SMD` = as.character(`SMD`)
-      ) %>%
-      select(`Study Author Year`, `Intervention`, `Comparison`, `Outcome Measure`, `Weeks`, `SMD`, ` `, border_top)
+    # Force to list if it isn't already (extra protection)
+    merged_forest$` ` <- as.list(svg_list)
+    
+    # Convert SMD to character
+    merged_forest$SMD <- as.character(merged_forest$SMD)
+    
+    # SAFE SELECT: Ensure we keep all required columns
+    required_cols <- c("Study Author Year", "Intervention", "Comparison", "Outcome Measure", "Weeks", "SMD", " ", "border_top")
+    merged_forest <- merged_forest[, required_cols, drop = FALSE]
+    
+    # Ensure it's still a tibble
+    merged_forest <- tibble::as_tibble(merged_forest)
   }
   
-  # ALWAYS add axis row at the bottom
+  # Create axis footer with matching column structure
   forest_axis_footer <- tibble(
     `Study Author Year` = "",
     `Intervention` = "",
@@ -1429,36 +1599,53 @@ output$forest_tbl <- renderReactable({
     `Outcome Measure` = "",
     `Weeks` = "",
     `SMD` = "",
-    ` ` = make_forest_svg(NA, NA, NA, NA, max_n, 160, show_axis = TRUE),
-    border_top = TRUE  # Add border above the axis
+    ` ` = list(make_forest_svg(NA, NA, NA, NA, max_n, 160, show_axis = TRUE, tooltip_html = NULL)),
+    border_top = TRUE
   )
   
-  merged_forest <- bind_rows(merged_forest, forest_axis_footer)
+  # Combine rows - both should have identical column structure now
+  merged_forest <- dplyr::bind_rows(merged_forest, forest_axis_footer)
+  
+  # Final safety check
+  if (nrow(merged_forest) == 0) {
+    merged_forest <- tibble(
+      `Study Author Year` = "",
+      `Intervention` = "",
+      `Comparison` = "",
+      `Outcome Measure` = "",
+      `Weeks` = "",
+      `SMD` = "",
+      ` ` = list(""),
+      border_top = FALSE
+    )
+  }
   
   reactable(
     merged_forest,
     columns = list(
       `Study Author Year` = colDef(
-        name = "Study Author Year", 
-        minWidth = 180,  # Increased for longer text
+        name = "Study Author Year",
+        minWidth = 180,
+        sortable = FALSE,  # Disable sorting
         style = function(value, index) {
           style_list <- list()
-          if (!is.null(merged_forest$border_top) && merged_forest$border_top[index]) {
-            style_list$borderTop <- "2px solid #ccc"  # Your preferred border
+          if (!is.null(merged_forest$border_top) && length(merged_forest$border_top) >= index && merged_forest$border_top[index]) {
+            style_list$borderTop <- "2px solid #ccc"
           }
           style_list
         },
         headerStyle = list(
-          borderBottom = "3px solid #333",  # Thick border under header
-          borderTop = "3px solid #333"      # Thick border on top of header
+          borderBottom = "3px solid #333",
+          borderTop = "3px solid #333"
         )
       ),
       `Intervention` = colDef(
-        name = "Intervention", 
-        minWidth = 200,  # Increased for longer text
+        name = "Intervention",
+        minWidth = 200,
+        sortable = FALSE,  # Disable sorting
         style = function(value, index) {
           style_list <- list()
-          if (!is.null(merged_forest$border_top) && merged_forest$border_top[index]) {
+          if (!is.null(merged_forest$border_top) && length(merged_forest$border_top) >= index && merged_forest$border_top[index]) {
             style_list$borderTop <- "2px solid #ccc"
           }
           style_list
@@ -1469,11 +1656,12 @@ output$forest_tbl <- renderReactable({
         )
       ),
       `Comparison` = colDef(
-        name = "Comparison", 
-        minWidth = 150,  # Increased for longer text
+        name = "Comparison",
+        minWidth = 150,
+        sortable = FALSE,  # Disable sorting
         style = function(value, index) {
           style_list <- list()
-          if (!is.null(merged_forest$border_top) && merged_forest$border_top[index]) {
+          if (!is.null(merged_forest$border_top) && length(merged_forest$border_top) >= index && merged_forest$border_top[index]) {
             style_list$borderTop <- "2px solid #ccc"
           }
           style_list
@@ -1484,11 +1672,12 @@ output$forest_tbl <- renderReactable({
         )
       ),
       `Outcome Measure` = colDef(
-        name = "Outcome Measure", 
-        minWidth = 220,  # Increased for longer text
+        name = "Outcome Measure",
+        minWidth = 220,
+        sortable = FALSE,  # Disable sorting
         style = function(value, index) {
           style_list <- list()
-          if (!is.null(merged_forest$border_top) && merged_forest$border_top[index]) {
+          if (!is.null(merged_forest$border_top) && length(merged_forest$border_top) >= index && merged_forest$border_top[index]) {
             style_list$borderTop <- "2px solid #ccc"
           }
           style_list
@@ -1499,11 +1688,12 @@ output$forest_tbl <- renderReactable({
         )
       ),
       `Weeks` = colDef(
-        name = "Weeks", 
+        name = "Weeks",
         minWidth = 80,
+        sortable = FALSE,  
         style = function(value, index) {
           style_list <- list()
-          if (!is.null(merged_forest$border_top) && merged_forest$border_top[index]) {
+          if (!is.null(merged_forest$border_top) && length(merged_forest$border_top) >= index && merged_forest$border_top[index]) {
             style_list$borderTop <- "2px solid #ccc"
           }
           style_list
@@ -1514,11 +1704,12 @@ output$forest_tbl <- renderReactable({
         )
       ),
       `SMD` = colDef(
-        name = "SMD", 
+        name = "SMD",
         minWidth = 80,
+        sortable = FALSE,  
         style = function(value, index) {
           style_list <- list()
-          if (!is.null(merged_forest$border_top) && merged_forest$border_top[index]) {
+          if (!is.null(merged_forest$border_top) && length(merged_forest$border_top) >= index && merged_forest$border_top[index]) {
             style_list$borderTop <- "2px solid #ccc"
           }
           style_list
@@ -1529,12 +1720,13 @@ output$forest_tbl <- renderReactable({
         )
       ),
       ` ` = colDef(
-        name = " ", 
-        html = TRUE, 
-        minWidth = 500,  # Your preferred SVG width
+        name = " ",
+        html = TRUE,
+        minWidth = 500,
+        sortable = FALSE,  # Disable sorting on forest plot column
         style = function(value, index) {
           style_list <- list()
-          if (!is.null(merged_forest$border_top) && merged_forest$border_top[index]) {
+          if (!is.null(merged_forest$border_top) && length(merged_forest$border_top) >= index && merged_forest$border_top[index]) {
             style_list$borderTop <- "2px solid #ccc"
           }
           style_list
@@ -1551,16 +1743,16 @@ output$forest_tbl <- renderReactable({
     resizable = TRUE,
     style = list(
       fontFamily = "Arial, sans-serif",
-      fontSize = "13px"
+      fontSize = "13px",
+      height = "75vh", 
+      overflowY = "auto"
     ),
     rowStyle = function(index) {
-      # Check if this is the axis row (last row)
       is_axis_row <- index == nrow(merged_forest)
-      
       if (is_axis_row) {
-        list(height = "160px")  # Larger height for axis row
+        list(height = "160px")
       } else {
-        list(height = paste0(row_height, "px"))  # Auto-fitted height based on content
+        list(height = paste0(row_height, "px"))
       }
     },
     fullWidth = TRUE,

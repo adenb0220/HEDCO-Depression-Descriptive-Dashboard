@@ -106,3 +106,7 @@ sapply(c(
   "",
   "3. Urban\r\n1. Rural"
 ), clean_urbanicity)
+
+
+merged %>% 
+  filter(country == "Hong Kong")
