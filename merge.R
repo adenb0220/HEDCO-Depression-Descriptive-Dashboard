@@ -69,6 +69,7 @@ merged %>%
 
 table(studies$percent_female)
 
+table(merged$outcome_measure)
 
 
 clean_urbanicity <- function(x) {
@@ -110,3 +111,132 @@ sapply(c(
 
 merged %>% 
   filter(country == "Hong Kong")
+
+
+
+
+
+
+
+
+
+
+table(merged$percent_white)
+
+merged %>% 
+  group_by(study) %>% 
+  slice(1) %>%  # Take first row of each study
+  ungroup() %>%
+  filter(percent_black > -1) %>% 
+  pull(percent_black) %>%
+  mean(na.rm = TRUE)
+
+table(merged$percent_black)
+table(merged$percent_aian)
+table(merged$percent_nhpi)
+table(merged$percent_asian)
+table(merged$percent_latinx)
+table(merged$percent_other)
+
+##############################################
+table(merged$school_level)
+# Load required libraries
+library(dplyr)
+library(ggplot2)
+library(plotly)
+
+# Classification function based on grade levels
+classify_school_level <- function(grade_str) {
+  if (is.na(grade_str) || tolower(grade_str) %in% c("cannot tell", "unclear", "")) {
+    return("Unclear")
+  }
+  
+  # Clean the string and extract numbers
+  grade_str <- gsub("[^0-9,]", "", grade_str)
+  grades <- as.numeric(unlist(strsplit(grade_str, ",")))
+  grades <- grades[!is.na(grades)]
+  
+  if (length(grades) == 0) return("Unclear")
+  
+  min_grade <- min(grades)
+  max_grade <- max(grades)
+  
+  # Classification logic
+  if (min_grade >= 1 && max_grade <= 5) return("Elementary")
+  if (min_grade >= 6 && max_grade <= 8) return("Middle") 
+  if (min_grade >= 9 && max_grade <= 12) return("High")
+  if (min_grade <= 5 && max_grade >= 6 && max_grade <= 8) return("Elementary + Middle")
+  if (min_grade >= 6 && max_grade >= 9) return("Middle + High")
+  return("Unclear")
+}
+
+# Color scale
+green_scale_plotly <- c(
+  "#8ABB40",  
+  "#489D46",  
+  "#007030",  
+  "#104735"
+)
+
+# Process data by study, not by row
+plot_data <- merged %>%
+  # Group by study and get one grade_level per study
+  group_by(study) %>%
+  summarise(grade_level = first(grade_level), .groups = "drop") %>%
+  # Classify school levels
+  mutate(school_level_classified = sapply(grade_level, classify_school_level)) %>%
+  # Count studies by school level
+  count(school_level_classified, name = "count") %>%
+  mutate(
+    # Order levels for display
+    school_level_classified = factor(
+      school_level_classified,
+      levels = c("Unclear", "High", "Middle + High", "Middle", 
+                 "Elementary + Middle", "Elementary")
+    ),
+    hover = sprintf(
+      "School Level: <b>%s</b><br>Number of Studies: <b>%d</b>",
+      school_level_classified, count
+    )
+  )
+
+# Create the plot
+school_level_plot <- ggplot(plot_data, aes(
+  x = school_level_classified,
+  y = count,
+  fill = count,
+  text = hover
+)) +
+  geom_col() +
+  coord_flip() +
+  theme_minimal() +
+  scale_fill_gradientn(colors = green_scale_plotly) +
+  theme(
+    legend.position = "none",
+    axis.text.y = element_text(size = 10),
+    plot.title = element_text(size = 14, hjust = 0.5)
+  ) +
+  labs(
+    title = "Distribution of Studies by School Level",
+    x = "School Level", 
+    y = "Number of Studies"
+  )
+
+# Convert to plotly and display
+plotly_plot <- ggplotly(school_level_plot, tooltip = "text") %>%
+  layout(
+    margin = list(l = 150, r = 20, t = 60, b = 50),
+    hoverlabel = list(
+      bgcolor = "white",
+      font = list(color = "black", size = 12)
+    )
+  ) %>%
+  layout(dragmode = FALSE) %>%
+  config(displayModeBar = FALSE)
+
+# Display the plot
+plotly_plot
+
+# Check the counts to see if they match the target
+print("Study counts by school level:")
+print(table(plot_data$school_level_classified))
