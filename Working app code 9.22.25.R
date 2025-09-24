@@ -781,7 +781,7 @@ document.addEventListener("DOMContentLoaded", function() {
                     div(style = "margin-top: 22px;"),
                     pickerInput(
                       inputId = "country_filter",
-                      label = "Location",
+                      label = "Country",
                       choices = country_choices,
                       selected = country_choices,
                       multiple = TRUE,
@@ -969,10 +969,9 @@ document.addEventListener("DOMContentLoaded", function() {
                column(6,
                       div(
                         style = "margin-left: 10px; margin-top: 22px; font-size: 18px",
-                        "Location"
+                        "Country"
                       ),
-                      plotlyOutput("world_map", height="350px"),
-                      uiOutput("country_note") 
+                      plotlyOutput("world_map")
                ),
                
                # School Level Bar Chart
@@ -981,13 +980,13 @@ document.addEventListener("DOMContentLoaded", function() {
                         style = "margin-left: 10px; margin-top: 22px; font-size: 18px",
                         "School Level"
                       ),
-                      plotlyOutput("school_level", height= "420px")
+                      plotlyOutput("school_level")
                ),
                column(3, 
                       div(style = "margin-left: 10px; margin-top: 22px; font-size: 18px",
                           "Urbanicity"
                       ),
-                      plotlyOutput("urbanicity", height= "370px")
+                      plotlyOutput("urbanicity")
                )
              ),
              
@@ -998,13 +997,13 @@ document.addEventListener("DOMContentLoaded", function() {
                         style = "margin-left: 10px; margin-top: 22px; font-size: 18px",
                         "No. of Schools"
                       ),
-                      plotlyOutput("num_schools_plot", height = "390px")),
+                      plotlyOutput("num_schools_plot", height = "350px")),
                column(2,
                       div(
                         style = "margin-left: 10px; margin-top: 22px; font-size: 18px",
                         "No. of Classsrooms"
                       ),
-                      plotlyOutput("num_class_plot", height = "390px")),
+                      plotlyOutput("num_class_plot", height = "350px")),
                column(4,
                       div(
                         style = "margin-left: 10px; margin-top: 22px; font-size: 18px",
@@ -1016,13 +1015,13 @@ document.addEventListener("DOMContentLoaded", function() {
                         style = "margin-left: 10px; margin-top: 22px; font-size: 18px",
                         "Average Age"
                       ),
-                      plotlyOutput("avg_age", height = "390px")),
+                      plotlyOutput("avg_age", height = "350px")),
                column(2,
                       div(
                         style = "margin-left: 10px; margin-top: 22px; font-size: 18px",
-                        "Female Percentages"
+                        "Female"
                       ),
-                      plotlyOutput("pct_fem", height = "390px"))
+                      plotlyOutput("pct_fem", height = "350px"))
              ),
              
              ### Row 3
@@ -1038,16 +1037,16 @@ document.addEventListener("DOMContentLoaded", function() {
                         style = "margin-left: 10px; margin-top: 22px; font-size: 18px",
                         "FRPL Percentages"
                       ),
-                      plotlyOutput("frpl_graph", height = "390px")),
+                      plotlyOutput("frpl_graph", height = "350px")),
                column(2,
                       div(
                         style = "margin-left: 10px; margin-top: 22px; font-size: 18px",
                         "ELL Percentages"
                       ),
-                      plotlyOutput("ell_graph", height = "390px")),
+                      plotlyOutput("ell_graph", height = "350px")),
                column(5,
                       uiOutput("outcomes_navigation"),
-                      plotlyOutput("outcomes_graph", height = "360px")
+                      plotlyOutput("outcomes_graph", height = "400px")
                )
              )
     )  
@@ -1198,17 +1197,6 @@ server <- function(input, output, session) {
       count(country)
   })
   
-  # Reactive to count studies in Hong Kong and Mauritius
-  hk_mauritius_counts <- reactive({
-    fd <- filtered_data()
-    tibble(
-      country = c("Hong Kong", "Mauritius"),
-      count = sapply(c("Hong Kong", "Mauritius"), function(cntry) {
-        n_distinct(fd$study[fd$country == cntry])
-      })
-    )
-  })
-  
   country_map_data <- reactive({
     cc <- country_counts()
     country_names <- cc$country
@@ -1253,8 +1241,7 @@ server <- function(input, output, session) {
     d <- country_map_data()
     hover_is_on <- hover_enabled()
     
-    plot_geo() %>%
-      # Choropleth trace (country polygons)
+    plot <- plot_geo() %>%
       add_trace(
         z = ifelse(d$country_vals > 0, d$country_vals, NA),
         locations = names(d$country_vals),
@@ -1266,37 +1253,26 @@ server <- function(input, output, session) {
         zmax = max(d$country_vals, na.rm = TRUE),
         showscale = FALSE,
         text = d$country_name_lookup[names(d$country_vals)],
-        hoverinfo = if (hover_is_on) "text+z" else "none",
+        hoverinfo = if (hover_is_on) "text+z" else "none",  # toggle hover
         hovertemplate = if (hover_is_on) paste0(
           "<span style='font-size:18px; font-family: \"Open Sans\", sans-serif;'>Country: <b>%{text}</b><br>",
           "No. of Studies: <b>%{z}</b></span><extra></extra>"
         ) else NULL,
         autocolorscale = FALSE
       ) %>%
-      # Markers+Text trace (numbers over countries)
       add_trace(
         type = "scattergeo",
-        mode = "markers+text",
+        mode = "text",
         locations = d$studied_iso3,
         locationmode = "ISO-3",
-        marker = list(
-          size = 28,
-          color = "black",
-          opacity = 0.3
-        ),
         text = d$studied_counts,
-        textfont = list(
-          size = 14,
-          color = "white",
-          family = "Open Sans, sans-serif"
-        ),
-        textposition = "middle center",
-        showlegend = FALSE,
-        hoverinfo = "text",
-        hovertext = paste0(
+        hovertext = if (hover_is_on) paste0(
           "<span style='font-size:18px; font-family: \"Open Sans\", sans-serif;'>Country: <b>", d$studied_names, "</b><br>",
           "No. of Studies: <b>", d$studied_counts, "</b></span>"
-        )
+        ) else "",
+        hoverinfo = if (hover_is_on) "text" else "none",
+        textfont = list(size = 14, color = "white"),
+        showlegend = FALSE
       ) %>%
       layout(
         hoverlabel = list(
@@ -1316,36 +1292,18 @@ server <- function(input, output, session) {
           oceancolor = "#C5DEDF",
           bgcolor = "rgb(180,205,250)",
           projection = list(type = "equirectangular"),
-          lonaxis = list(range = c(-150, 150)),
-          lataxis = list(range = c(-50, 70))
+          lonaxis = list(range = c(-150, 150)),  
+          lataxis = list(range = c(-50, 70))            
         ),
         margin = list(l = 20, r = 0, t = 0, b = 0)
       ) %>%
       config(
         displayModeBar = FALSE,
-        scrollZoom = TRUE,
+        scrollZoom = FALSE,
         doubleClick = FALSE
       )
-  })
-  
-  output$country_note <- renderUI({
-    counts <- hk_mauritius_counts()
-    hk_count <- counts$count[counts$country == "Hong Kong"]
-    maur_count <- counts$count[counts$country == "Mauritius"]
     
-    pluralize <- function(n, name) {
-      verb <- if (n == 1) "was" else "were"
-      word <- if (n == 1) "study" else "studies"
-      sprintf("<b>%d</b> %s %s set in <b>%s</b>", n, word, verb, name)
-    }
-    
-    main_text <- sprintf("%s and %s.", 
-                         pluralize(hk_count, "Hong Kong"),
-                         pluralize(maur_count, "Mauritius"))
-    
-    HTML(sprintf(
-      "<span style='font-size:16px; color:#444; margin-left:40px; display: block;'><b>Note:</b> Countries under 1,000 sq miles are not visible on this map.<br>
-     With the current filters: %s", main_text))
+    plot
   })
   
   ########################################################
@@ -2192,7 +2150,7 @@ server <- function(input, output, session) {
         if (current_page == 1) {
           paste0("Outcome Measure Groups Used in >2 Studies")
         } else {
-          paste0("Outcome Measure Groups Used in ≤2 Studies")
+          paste0("Outcome Measure Groups Used in <2 Studies")
         }
       ),
       div(
@@ -2566,7 +2524,7 @@ server <- function(input, output, session) {
         ),
         htmltools::tags$circle(
           cx = scale(yi), cy = center_y, r = r,
-          fill = ifelse(yi < -0.03, "#007030",
+          fill = ifelse(yi < -0.03, "#235223",
                         ifelse(yi > 0.03, "#E0C311", "#B0B0B0")),
           stroke = "#222", "stroke-width" = 1
         )
@@ -2896,7 +2854,7 @@ server <- function(input, output, session) {
         ),
         htmltools::tags$circle(
           cx = scale(yi), cy = center_y, r = r,
-          fill = ifelse(yi < -0.03, "#007030",
+          fill = ifelse(yi < -0.03, "#235223",
                         ifelse(yi > 0.03, "#E0C311", "#B0B0B0")),
           stroke = "#222", "stroke-width" = 1
         )

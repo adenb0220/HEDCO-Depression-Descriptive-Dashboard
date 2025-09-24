@@ -39,6 +39,8 @@ all_domains_df <- load_all_domains(outcome_domains_sheets)
 
 # Get unique outcome domains from the actual data (not sheet names)
 outcome_domains <- sort(unique(all_domains_df$outcome_domain))
+# Remove any NA values if they exist
+outcome_domains <- outcome_domains[!is.na(outcome_domains)]
 
 # Load studies data (same as before)
 studies <- import(here("Data", "Depression_Overview_Primary_Study_Data.xlsx"), which = "study_level")
@@ -164,131 +166,41 @@ process_school_types <- function(school_type_string) {
 
 # Outcome measure choices - Root-based grouping
 # Root-based outcome measure grouping with improved suffix handling
-# Improved outcome measure grouping function
 process_outcome_measures_roots <- function(all_outcome_measures) {
   # Remove NA values and empty strings for processing
   clean_measures <- all_outcome_measures[!is.na(all_outcome_measures) & trimws(all_outcome_measures) != ""]
   
   if (length(clean_measures) == 0) return(rep("Other/Unclear", length(all_outcome_measures)))
   
-  # Function to normalize and extract base instrument names
-  normalize_instrument_name <- function(measure) {
-    # Convert to lowercase for comparison
-    lower_measure <- tolower(measure)
+  # Function to extract meaningful word combinations
+  extract_meaningful_parts <- function(measure) {
+    # Remove parentheses content
+    clean_measure <- gsub("\\([^)]*\\)", "", measure)
     
-    # Define instrument families with their variations
-    instrument_patterns <- list(
-      "Center for Epidemiologic Studies Depression Scale" = c(
-        "center for epidemiologic studies depression scale",
-        "ces-d", "cesd"
-      ),
-      "Children's Depression Inventory" = c(
-        "children's depression inventory",
-        "childrens depression inventory",
-        "child depression inventory",
-        "cdi"
-      ),
-      "Revised Children's Anxiety and Depression Scale" = c(
-        "revised children's anxiety and depression scale",
-        "revised child anxiety and depression scale",
-        "rcads"
-      ),
-      "Beck Depression Inventory" = c(
-        "beck depression inventory",
-        "bdi"
-      ),
-      "Patient Health Questionnaire" = c(
-        "patient health questionnaire",
-        "phq"
-      ),
-      "Depression Anxiety Stress Scale" = c(
-        "depression anxiety stress scale",
-        "dass"
-      ),
-      "Reynolds Adolescent Depression Scale" = c(
-        "reynolds adolescent depression scale",
-        "rads"
-      ),
-      "Reynolds Child Depression Scale" = c(
-        "reynolds child depression scale",
-        "rcds"
-      ),
-      "Revised Children's Manifest Anxiety Scale" = c(
-        "revised children's manifest anxiety scale",
-        "revised child manifest anxiety scale",
-        "rcmas"
-      ),
-      "Spence Children's Anxiety Scale" = c(
-        "spence children's anxiety scale",
-        "spence child anxiety scale",
-        "scas"
-      ),
-      "Mood and Feelings Questionnaire" = c(
-        "mood and feelings questionnaire",
-        "mfq"
-      ),
-      "Generalised Anxiety Disorder Scale" = c(
-        "generalised anxiety disorder",
-        "generalized anxiety disorder",
-        "gad"
-      ),
-      "Multidimensional Anxiety Scale" = c(
-        "multidimensional anxiety scale",
-        "masc"
-      ),
-      "State-Trait Anxiety Inventory" = c(
-        "state-trait anxiety inventory",
-        "speilberger state-trait anxiety inventory",
-        "spielberger state-trait anxiety inventory",
-        "stai"
-      ),
-      "Major Depression Inventory" = c(
-        "major depression inventory",
-        "mdi"
-      ),
-      "Warwick-Edinburgh Mental Wellbeing Scale" = c(
-        "warwick-edinburgh mental wellbeing scale",
-        "wemwbs"
-      ),
-      "Kessler Psychological Distress Scale" = c(
-        "kessler psychological distress scale",
-        "six-item short form of the kessler psychological distress scale",
-        "k6", "k10"
-      )
-    )
-    
-    # Check each instrument family
-    for (instrument_name in names(instrument_patterns)) {
-      patterns <- instrument_patterns[[instrument_name]]
-      for (pattern in patterns) {
-        if (grepl(pattern, lower_measure, fixed = TRUE)) {
-          return(instrument_name)
-        }
-      }
-    }
-    
-    # If no match found, try to extract a clean base name
-    # Remove common suffixes and modifiers
-    clean_measure <- measure
-    clean_measure <- gsub("\\s*>\\s*\\d+.*$", "", clean_measure)  # Remove > 24, > 15 etc
+    # Remove common suffixes and modifiers (updated with colon variants)
     clean_measure <- gsub("\\s*-\\s*(Short\\s+Form|Parent\\s+Report|Youth\\s+Self-Report|Child\\s+Report|Teacher\\s+Report|Self-Report).*$", "", clean_measure)
-    clean_measure <- gsub("\\s*:\\s*(Self-Report|Teacher\\s+Report|Parent\\s+Report).*$", "", clean_measure)
-    clean_measure <- gsub("\\s*-\\s*(General\\s+Anxiety\\s+Subscale|Panic\\s+Subscale|Separation\\s+Anxiety\\s+Subscale|Social\\s+Phobia\\s+Subscale|Depression\\s+Subscale|Anxiety\\s+Subscale).*$", "", clean_measure)
+    clean_measure <- gsub("\\s*:\\s*(Self-Report|Teacher\\s+Report|Parent\\s+Report).*$", "", clean_measure)  # Handle colon suffixes
     clean_measure <- gsub("\\s*Short\\s+Version.*$", "", clean_measure)
     clean_measure <- gsub("\\s*-\\s*Revised.*$", "", clean_measure)
     clean_measure <- gsub("\\s*-2.*$", "", clean_measure)
     clean_measure <- gsub("\\s*-Youth.*$", "", clean_measure)
     clean_measure <- gsub("\\s*-II.*$", "", clean_measure)
     clean_measure <- gsub("\\s*for\\s+Children.*$", "", clean_measure)
+    clean_measure <- gsub("\\s*-\\s*Depression\\s+Sub-Scale.*$", "", clean_measure)
+    clean_measure <- gsub("\\s*-\\s*Depression\\s+Subscale.*$", "", clean_measure)
     clean_measure <- gsub("-9$", "", clean_measure)  # Handle PHQ-9 -> PHQ
-    clean_measure <- gsub("\\s*\\(.*\\).*$", "", clean_measure)  # Remove anything in parentheses
+    
+    # Clean up extra spaces
     clean_measure <- gsub("\\s+", " ", trimws(clean_measure))
     
     return(clean_measure)
   }
   
-  # Normalize all measures
-  normalized <- sapply(clean_measures, normalize_instrument_name, USE.NAMES = FALSE)
+  # Extract roots for all measures
+  roots <- sapply(clean_measures, extract_meaningful_parts, USE.NAMES = FALSE)
+  
+  # Group identical roots
+  root_groups <- split(seq_along(roots), roots)
   
   # Create result mapping
   result <- character(length(all_outcome_measures))
@@ -298,76 +210,28 @@ process_outcome_measures_roots <- function(all_outcome_measures) {
     if (is.na(all_outcome_measures[i]) || trimws(all_outcome_measures[i]) == "") {
       result[i] <- "Other/Unclear"
     } else {
-      result[i] <- normalized[clean_idx]
+      root <- roots[clean_idx]
+      # If only one measure has this root, keep the original name (truncated)
+      if (length(root_groups[[root]]) == 1) {
+        # For single measures, use a cleaned version of the original
+        original <- clean_measures[clean_idx]
+        # Remove parentheses and long suffixes for cleaner display
+        cleaned_original <- gsub("\\([^)]*\\).*$", "", original)
+        cleaned_original <- gsub("\\s*-\\s*(Short\\s+Form|Parent\\s+Report|Youth\\s+Self-Report|Child\\s+Report|Teacher\\s+Report|Self-Report).*$", "", cleaned_original)
+        cleaned_original <- gsub("\\s*:\\s*(Self-Report|Teacher\\s+Report|Parent\\s+Report).*$", "", cleaned_original)
+        cleaned_original <- gsub("-9$", "", cleaned_original)  # Handle PHQ-9
+        cleaned_original <- trimws(cleaned_original)
+        result[i] <- cleaned_original
+      } else {
+        # Multiple measures share this root, use the root as group name
+        result[i] <- root
+      }
       clean_idx <- clean_idx + 1
     }
   }
   
   return(result)
 }
-
-# Test the function with your data
-outcome_measure_family_choices <- c(
-  "Alcohol Misuse",
-  "Anxiety Scale",
-  "Australian Tertiary Admission Rank",
-  "Beck Depression Inventory",
-  "Cannabis Misuse",
-  "Center for Epidemiologic Studies Depression Scale",
-  "Center for Epidemiologic Studies Depression Scale > 24",
-  "Center for Epidemiologic Studies Depression Scale >15",
-  "Children's Depression Inventory",
-  "Children's Automatic Thoughts Scale",
-  "Children's Depression Inventory",
-  "Children's Depression Rating Scale",
-  "Childrens Depression Inventory",
-  "Depression Anxiety Stress Scale",
-  "Depression Questionnaire",
-  "Diagnostic Interview",
-  "Generalised Anxiety Disorder seven item scale",
-  "Major Depression Inventory",
-  "Mood and Feelings Questionnaire",
-  "Multidimensional Anxiety Scale",
-  "Patient Health Questionnaire-9",
-  "Peer Nomination Inventory for Depression",
-  "Revised Children's Anxiety and Depression Scale",
-  "Revised Children's Anxiety and Depression Scale - General Anxiety Subscale",
-  "Revised Children's Anxiety and Depression Scale - Panic Subscale",
-  "Revised Children's Anxiety and Depression Scale - Separation Anxiety Subscale",
-  "Revised Children's Anxiety and Depression Scale - Social Phobia Subscale",
-  "Revised Children's Attributional Style Questionnaire",
-  "Revised Children's Manifest Anxiety Scale",
-  "Reynolds Adolescent Depression Scale",
-  "Reynolds Child Depression Scale",
-  "Scale for Assessing Academic Stress",
-  "School Grades",
-  "Selbstbeurteilungsbogen-Depressive Stoerungen",
-  "Self-Harming Behavior",
-  "Self-Harming Thoughts",
-  "Six-item short form of the Kessler psychological distress scale",
-  "Speilberger State-Trait Anxiety Inventory",
-  "Spence Child Anxiety Scale - Generalized Anxiety Disorder",
-  "Spence Child Anxiety Scale - Social Anxiety",
-  "Spence Children's Anxiety Scale",
-  "State Anxiety Inventory for Children",
-  "Street Drug Misuse",
-  "Structured Clinical Interview for DSM-IV Disorders",
-  "Structured Clinical Interviews",
-  "Warwick-Edinburgh Mental Wellbeing Scale",
-  "Youth Risk Behavior Survey"
-)
-
-# Test the grouping
-grouped_outcomes <- process_outcome_measures_roots(outcome_measure_family_choices)
-
-# Show the results
-results_df <- data.frame(
-  Original = outcome_measure_family_choices,
-  Grouped = grouped_outcomes,
-  stringsAsFactors = FALSE
-)
-
-print(results_df)
 
 ########################################
 # Intervention processing
@@ -758,7 +622,6 @@ document.addEventListener("DOMContentLoaded", function() {
 });
 </script>
 '),
-  uiOutput("outcomes_tab_triggers"),
   # Application title
   fluidRow(
     column(12,
@@ -781,7 +644,7 @@ document.addEventListener("DOMContentLoaded", function() {
                     div(style = "margin-top: 22px;"),
                     pickerInput(
                       inputId = "country_filter",
-                      label = "Location",
+                      label = "Country",
                       choices = country_choices,
                       selected = country_choices,
                       multiple = TRUE,
@@ -887,7 +750,7 @@ document.addEventListener("DOMContentLoaded", function() {
                     div(style = "margin-top: 22px;"),
                     pickerInput(
                       inputId = "outcome_family_filter",
-                      label = "Outcome Measure Group",
+                      label = "Outcome Measure",
                       choices = outcome_measure_family_choices,
                       selected = outcome_measure_family_choices,
                       multiple = TRUE,
@@ -969,10 +832,9 @@ document.addEventListener("DOMContentLoaded", function() {
                column(6,
                       div(
                         style = "margin-left: 10px; margin-top: 22px; font-size: 18px",
-                        "Location"
+                        "Country"
                       ),
-                      plotlyOutput("world_map", height="350px"),
-                      uiOutput("country_note") 
+                      plotlyOutput("world_map")
                ),
                
                # School Level Bar Chart
@@ -981,13 +843,13 @@ document.addEventListener("DOMContentLoaded", function() {
                         style = "margin-left: 10px; margin-top: 22px; font-size: 18px",
                         "School Level"
                       ),
-                      plotlyOutput("school_level", height= "420px")
+                      plotlyOutput("school_level")
                ),
                column(3, 
                       div(style = "margin-left: 10px; margin-top: 22px; font-size: 18px",
                           "Urbanicity"
                       ),
-                      plotlyOutput("urbanicity", height= "370px")
+                      plotlyOutput("urbanicity")
                )
              ),
              
@@ -998,13 +860,13 @@ document.addEventListener("DOMContentLoaded", function() {
                         style = "margin-left: 10px; margin-top: 22px; font-size: 18px",
                         "No. of Schools"
                       ),
-                      plotlyOutput("num_schools_plot", height = "390px")),
+                      plotlyOutput("num_schools_plot", height = "350px")),
                column(2,
                       div(
                         style = "margin-left: 10px; margin-top: 22px; font-size: 18px",
                         "No. of Classsrooms"
                       ),
-                      plotlyOutput("num_class_plot", height = "390px")),
+                      plotlyOutput("num_class_plot", height = "350px")),
                column(4,
                       div(
                         style = "margin-left: 10px; margin-top: 22px; font-size: 18px",
@@ -1016,18 +878,18 @@ document.addEventListener("DOMContentLoaded", function() {
                         style = "margin-left: 10px; margin-top: 22px; font-size: 18px",
                         "Average Age"
                       ),
-                      plotlyOutput("avg_age", height = "390px")),
+                      plotlyOutput("avg_age", height = "350px")),
                column(2,
                       div(
                         style = "margin-left: 10px; margin-top: 22px; font-size: 18px",
-                        "Female Percentages"
+                        "Female"
                       ),
-                      plotlyOutput("pct_fem", height = "390px"))
+                      plotlyOutput("pct_fem", height = "350px"))
              ),
              
              ### Row 3
              fluidRow(
-               column(3,
+               column(4,
                       div(
                         style = "margin-left: 10px; margin-top: 22px; font-size: 18px",
                         "Race/Ethnicity Percentages Across Selected Studies"
@@ -1038,19 +900,21 @@ document.addEventListener("DOMContentLoaded", function() {
                         style = "margin-left: 10px; margin-top: 22px; font-size: 18px",
                         "FRPL Percentages"
                       ),
-                      plotlyOutput("frpl_graph", height = "390px")),
+                      plotlyOutput("frpl_graph", height = "350px")),
                column(2,
                       div(
                         style = "margin-left: 10px; margin-top: 22px; font-size: 18px",
                         "ELL Percentages"
                       ),
-                      plotlyOutput("ell_graph", height = "390px")),
-               column(5,
-                      uiOutput("outcomes_navigation"),
-                      plotlyOutput("outcomes_graph", height = "360px")
-               )
-             )
-    )  
+                      plotlyOutput("ell_graph", height = "350px")),
+               column(4,
+                      div(
+                        style = "margin-left: 10px; margin-top: 22px; font-size: 18px",
+                        "Outcome Measures Used"
+                      ),
+                      plotlyOutput("outcomes_graph", height = "350px"))
+             )  
+    )
   )
 )
 
@@ -1198,17 +1062,6 @@ server <- function(input, output, session) {
       count(country)
   })
   
-  # Reactive to count studies in Hong Kong and Mauritius
-  hk_mauritius_counts <- reactive({
-    fd <- filtered_data()
-    tibble(
-      country = c("Hong Kong", "Mauritius"),
-      count = sapply(c("Hong Kong", "Mauritius"), function(cntry) {
-        n_distinct(fd$study[fd$country == cntry])
-      })
-    )
-  })
-  
   country_map_data <- reactive({
     cc <- country_counts()
     country_names <- cc$country
@@ -1253,8 +1106,7 @@ server <- function(input, output, session) {
     d <- country_map_data()
     hover_is_on <- hover_enabled()
     
-    plot_geo() %>%
-      # Choropleth trace (country polygons)
+    plot <- plot_geo() %>%
       add_trace(
         z = ifelse(d$country_vals > 0, d$country_vals, NA),
         locations = names(d$country_vals),
@@ -1266,37 +1118,26 @@ server <- function(input, output, session) {
         zmax = max(d$country_vals, na.rm = TRUE),
         showscale = FALSE,
         text = d$country_name_lookup[names(d$country_vals)],
-        hoverinfo = if (hover_is_on) "text+z" else "none",
+        hoverinfo = if (hover_is_on) "text+z" else "none",  # toggle hover
         hovertemplate = if (hover_is_on) paste0(
           "<span style='font-size:18px; font-family: \"Open Sans\", sans-serif;'>Country: <b>%{text}</b><br>",
           "No. of Studies: <b>%{z}</b></span><extra></extra>"
         ) else NULL,
         autocolorscale = FALSE
       ) %>%
-      # Markers+Text trace (numbers over countries)
       add_trace(
         type = "scattergeo",
-        mode = "markers+text",
+        mode = "text",
         locations = d$studied_iso3,
         locationmode = "ISO-3",
-        marker = list(
-          size = 28,
-          color = "black",
-          opacity = 0.3
-        ),
         text = d$studied_counts,
-        textfont = list(
-          size = 14,
-          color = "white",
-          family = "Open Sans, sans-serif"
-        ),
-        textposition = "middle center",
-        showlegend = FALSE,
-        hoverinfo = "text",
-        hovertext = paste0(
+        hovertext = if (hover_is_on) paste0(
           "<span style='font-size:18px; font-family: \"Open Sans\", sans-serif;'>Country: <b>", d$studied_names, "</b><br>",
           "No. of Studies: <b>", d$studied_counts, "</b></span>"
-        )
+        ) else "",
+        hoverinfo = if (hover_is_on) "text" else "none",
+        textfont = list(size = 14, color = "white"),
+        showlegend = FALSE
       ) %>%
       layout(
         hoverlabel = list(
@@ -1316,36 +1157,18 @@ server <- function(input, output, session) {
           oceancolor = "#C5DEDF",
           bgcolor = "rgb(180,205,250)",
           projection = list(type = "equirectangular"),
-          lonaxis = list(range = c(-150, 150)),
-          lataxis = list(range = c(-50, 70))
+          lonaxis = list(range = c(-150, 150)),  
+          lataxis = list(range = c(-50, 70))            
         ),
         margin = list(l = 20, r = 0, t = 0, b = 0)
       ) %>%
       config(
         displayModeBar = FALSE,
-        scrollZoom = TRUE,
+        scrollZoom = FALSE,
         doubleClick = FALSE
       )
-  })
-  
-  output$country_note <- renderUI({
-    counts <- hk_mauritius_counts()
-    hk_count <- counts$count[counts$country == "Hong Kong"]
-    maur_count <- counts$count[counts$country == "Mauritius"]
     
-    pluralize <- function(n, name) {
-      verb <- if (n == 1) "was" else "were"
-      word <- if (n == 1) "study" else "studies"
-      sprintf("<b>%d</b> %s %s set in <b>%s</b>", n, word, verb, name)
-    }
-    
-    main_text <- sprintf("%s and %s.", 
-                         pluralize(hk_count, "Hong Kong"),
-                         pluralize(maur_count, "Mauritius"))
-    
-    HTML(sprintf(
-      "<span style='font-size:16px; color:#444; margin-left:40px; display: block;'><b>Note:</b> Countries under 1,000 sq miles are not visible on this map.<br>
-     With the current filters: %s", main_text))
+    plot
   })
   
   ########################################################
@@ -2154,153 +1977,50 @@ server <- function(input, output, session) {
   })
   
   ###################################################################################
-  # Outcome families 
-  # Add reactive value to track which plot is shown
-  # Reactive value to track which plot is shown
-  outcomes_page_selected <- reactiveVal(1)  # 1 for ">2 studies", 2 for "<2 studies"
-  
-  output$outcomes_navigation <- renderUI({
-    data <- filtered_data()
-    if (nrow(data) == 0) return(NULL)
-    
-    # Prepare outcome families
-    outcomes_base_data <- data %>%
-      mutate(
-        outcome_family_clean = ifelse(
-          is.na(processed_outcome_measure_roots) | trimws(processed_outcome_measure_roots) == "",
-          "Other/Unclear",
-          trimws(processed_outcome_measure_roots)
-        )
-      ) %>%
-      distinct(study, outcome_family_clean)
-    
-    family_counts <- outcomes_base_data %>%
-      group_by(outcome_family_clean) %>%
-      summarise(outcome_n = n_distinct(study), .groups = "drop")
-    
-    # Grouping counts for navigation
-    gt2_count <- sum(family_counts$outcome_n > 2)
-    lt2_count <- sum(family_counts$outcome_n <= 2)
-    current_page <- outcomes_page_selected()
-    
-    # Navigation bar
-    div(
-      style = "display: flex; justify-content: space-between; align-items: center; margin-bottom: 5px",
-      div(style = "width: 80px;"), # Empty div for layout spacing
-      div(
-        style = "margin-left: 10px; margin-top: 22px; font-size: 18px",
-        if (current_page == 1) {
-          paste0("Outcome Measure Groups Used in >2 Studies")
-        } else {
-          paste0("Outcome Measure Groups Used in ≤2 Studies")
-        }
-      ),
-      div(
-        if (current_page == 1 && lt2_count > 0) {
-          actionButton("outcomes_next", HTML("Next &#8250;"), class = "btn btn-outline-secondary btn-sm", style = "font-size: 12px;")
-        } else if (current_page == 2) {
-          actionButton("outcomes_back_to_first", HTML("Previous &#8249;"), class = "btn btn-outline-secondary btn-sm", style = "font-size: 12px;")
-        } else {
-          span()
-        }
-      )
-    )
-  })
-  
-  # Navigation button observers
-  observeEvent(input$outcomes_prev, {
-    outcomes_page_selected(max(1, outcomes_page_selected() - 1))
-  })
-  observeEvent(input$outcomes_next, {
-    outcomes_page_selected(2)
-  })
-  observeEvent(input$outcomes_back_to_first, {
-    outcomes_page_selected(1)
-  })
-  
+  # Outcomes graph - UPDATED
   output$outcomes_graph <- renderPlotly({
     hover_is_on <- hover_enabled()
+    
     data <- filtered_data()
     
     if (nrow(data) == 0) {
       return(create_compact_no_data_plot())
     }
     
-    outcomes_base_data <- data %>%
+    outcomes_plot_data <- data %>%
       mutate(
-        outcome_family_clean = ifelse(
-          is.na(processed_outcome_measure_roots) | trimws(processed_outcome_measure_roots) == "",
-          "Other/Unclear",
-          trimws(processed_outcome_measure_roots)
+        processed_outcome_measure_roots = ifelse(
+          is.na(processed_outcome_measure_roots) | trimws(processed_outcome_measure_roots) == "", 
+          "Other/Unclear", 
+          processed_outcome_measure_roots
         )
       ) %>%
-      distinct(study, outcome_family_clean)
-    
-    family_counts <- outcomes_base_data %>%
-      group_by(outcome_family_clean) %>%
-      summarise(outcome_n = n_distinct(study), .groups = "drop")
-    
-    current_page <- outcomes_page_selected()
-    
-    if (current_page == 1) {
-      # Show outcome families used in >2 studies
-      plot_data <- family_counts %>%
-        filter(outcome_n > 2) %>%
-        arrange(desc(outcome_n), outcome_family_clean)
-      plot_title <- "Outcome families used in >2 studies"
-      y_label <- "Number of Studies"
-    } else {
-      # Show outcome families used in <2 studies
-      plot_data <- family_counts %>%
-        filter(outcome_n <= 2) %>%
-        arrange(desc(outcome_n), outcome_family_clean)
-      plot_title <- "Outcome families used in <2 studies"
-      y_label <- "Number of Studies"
-    }
-    
-    if (nrow(plot_data) == 0) {
-      empty_plot <- ggplot() + 
-        annotate("text", x = 0.5, y = 0.5, 
-                 label = if(current_page == 1) "No outcome families used in >2 studies" else "No outcome families used in <2 studies",
-                 size = 5, color = "gray60") +
-        theme_void() +
-        xlim(0, 1) + ylim(0, 1)
-      return(ggplotly(empty_plot, tooltip = "none") %>%
-               layout(showlegend = FALSE, 
-                      margin = list(l = 20, r = 20, t = 20, b = 20)) %>%
-               config(displayModeBar = FALSE, responsive = TRUE))
-    }
-    
-    if (current_page == 1) {
-      # Show outcome families used in >2 studies
-      plot_data <- family_counts %>%
-        filter(outcome_n > 2) %>%
-        arrange(desc(outcome_n), outcome_family_clean)
-      plot_title <- "Outcome families used in >2 studies"
-      y_label <- "Number of Studies"
-      y_breaks <- seq(0, max(plot_data$outcome_n, na.rm = TRUE), by = 5)
-    } else {
-      # Show outcome families used in <2 studies
-      plot_data <- family_counts %>%
-        filter(outcome_n <= 2) %>%
-        arrange(desc(outcome_n), outcome_family_clean)
-      plot_title <- "Outcome families used in <2 studies"
-      y_label <- "Number of Studies"
-      y_breaks <- seq(1, 2, by = 1)
-    }
-    
-    plot_data <- plot_data %>%
+      distinct(study, processed_outcome_measure_roots) %>%
+      group_by(processed_outcome_measure_roots) %>%
+      summarise(outcome_n = n(), .groups = "drop") %>%
+      filter(outcome_n > 0) %>%
+      arrange(desc(outcome_n)) %>%
       mutate(
-        display_name = factor(outcome_family_clean, levels = outcome_family_clean),
-        hover = sprintf(
-          "Outcome Family: <b>%s</b><br>Studies: <b>%g</b>",
-          outcome_family_clean, 
-          as.numeric(outcome_n)
+        processed_outcome_measure_roots = factor(
+          processed_outcome_measure_roots,
+          levels = processed_outcome_measure_roots
         )
       )
     
-    outcomes_plot <- ggplot(plot_data, aes(
-      x = display_name,
+    if (nrow(outcomes_plot_data) == 0) {
+      return(create_compact_no_data_plot())
+    }
+    
+    outcomes_plot_data <- outcomes_plot_data %>%
+      mutate(
+        hover = sprintf(
+          "Outcome Measure: <b>%s</b><br>Number of Studies: <b>%d</b>",
+          processed_outcome_measure_roots, outcome_n
+        )
+      )
+    
+    outcomes_plot <- ggplot(outcomes_plot_data, aes(
+      x = processed_outcome_measure_roots,
       y = outcome_n,
       fill = outcome_n,
       text = hover
@@ -2309,31 +2029,21 @@ server <- function(input, output, session) {
       coord_flip() +
       theme_minimal() +
       scale_fill_gradientn(colors = green_scale_plotly) +
-      theme(
-        legend.position = "none",
-        axis.text.y = element_text(size = 10),
-        plot.title = element_text(size = 12, hjust = 0.5, margin = margin(b = 10))
-      ) +
-      labs(x = NULL, y = y_label) +
-      scale_x_discrete(limits = rev)+
-      scale_y_continuous(breaks = y_breaks)
+      theme(legend.position = "none") +
+      labs(x = NULL, y = NULL, fill = NULL) +
+      scale_x_discrete(limits = rev)
     
-    
-    p <- ggplotly(outcomes_plot, tooltip = if (hover_is_on) "text" else NULL) %>%
+    ggplotly(outcomes_plot, tooltip = if (hover_is_on) "text" else NULL ) %>%
       layout(
-        margin = list(l = 150, r = 5, t = 20, b = 30),
+        margin = list(l = 120, r = 5, t = 5, b = 5),
         hoverlabel = list(bgcolor = "white", font = list(color = "black")),
         autosize = TRUE
       ) %>%
       config(displayModeBar = FALSE, responsive = TRUE)
-    
-    return(p)
   })
   
-  
-  
-  ##################################################################################
-  ### Forest Plot Code with Hover Tooltips for Blank Cells
+  ###################################################################################
+  ### Complete Forest Plot Code with All Functions Defined
   ###################################################################################
   
   # 1. HELPER FUNCTIONS (define these first)
@@ -2418,31 +2128,7 @@ server <- function(input, output, session) {
     grades <- unlist(strsplit(as.character(processed_grades), ","))
     return(paste(grades, collapse = ", "))
   }
-  
-  # NEW: Function to create cell with hover tooltip for original content
-  create_cell_with_hover <- function(display_text, original_text, column_name, row_index) {
-    cell_id <- paste0("cell_", column_name, "_", row_index)
-    
-    # If display text is empty/blank but original text exists, show tooltip
-    if ((is.null(display_text) || display_text == "" || is.na(display_text)) && 
-        !is.null(original_text) && original_text != "" && !is.na(original_text)) {
-      
-      return(sprintf(
-        '<div class="hover-cell" id="%s" data-original="%s" style="width: 100%%; height: 100%%; cursor: pointer; position: relative;">
-        <span class="display-text">%s</span>
-        <div class="cell-tooltip" style="display: none; position: fixed; z-index: 10000; background: white; color: black; padding: 10px; border-radius: 6px; font-size: 13px; max-width: 400px; box-shadow: 0 4px 8px rgba(0,0,0,0.2); white-space: normal; line-height: 1.4; border: 1px solid #ccc; pointer-events: none;">%s</div>
-      </div>',
-        cell_id,
-        htmltools::htmlEscape(as.character(original_text)),
-        htmltools::htmlEscape(as.character(display_text)),
-        htmltools::htmlEscape(as.character(original_text))
-      ))
-    } else {
-      # Regular cell without hover
-      return(htmltools::htmlEscape(as.character(display_text)))
-    }
-  }
-  
+  # 
   # 2. HIERARCHICAL BLANKING FUNCTION
   hierarchical_blanker <- function(merged, group_cols) {
     n <- nrow(merged)
@@ -2504,11 +2190,11 @@ server <- function(input, output, session) {
     return(round(mean(heights)))
   }
   
-  # 4. FOREST SVG FUNCTION 
+  # 4. FOREST SVG FUNCTION (this must be defined before the output)
   make_forest_svg <- function(yi, lower, upper, n, max_n = NULL, row_height = 70, show_axis = FALSE, tooltip_html = NULL, hover_enabled = TRUE) {
     min_x <- -3.5; max_x <- 3.5
     ref_width <- 500
-    svg_height <- if (show_axis) 48 else row_height
+    svg_height <- if (show_axis) 48 else row_height   # <<<< new header height (48px is great)
     center_y <- svg_height / 2
     
     bubble_radius <- function(n, min_r = 2, max_r = 8) {
@@ -2522,9 +2208,9 @@ server <- function(input, output, session) {
     scale <- function(x) ref_width * (x - min_x) / (max_x - min_x)
     
     axis_svg <- if (show_axis) {
-      axis_y <- 25
-      tick_label_y <- 45
-      axis_label_y <- 10
+      axis_y <- 25          # <<<< axis line near vertical center
+      tick_label_y <- 45   # <<<< tick labels just under axis
+      axis_label_y <- 10   # <<<< axis label near bottom
       ticks <- seq(-3, 3, by = 1)
       tick_x <- scale(ticks)
       axis_g <- htmltools::tagList(
@@ -2566,337 +2252,7 @@ server <- function(input, output, session) {
         ),
         htmltools::tags$circle(
           cx = scale(yi), cy = center_y, r = r,
-          fill = ifelse(yi < -0.03, "#007030",
-                        ifelse(yi > 0.03, "#E0C311", "#B0B0B0")),
-          stroke = "#222", "stroke-width" = 1
-        )
-      )
-    }
-    
-    svg_content <- as.character(
-      htmltools::tags$svg(
-        width = "100%",
-        height = svg_height,
-        viewBox = sprintf("0 0 %d %d", ref_width, svg_height),
-        preserveAspectRatio = "xMidYMid meet",
-        htmltools::tags$rect(x=0, y=0, width=ref_width, height=svg_height, fill="white"),
-        forest_geom,
-        htmltools::tags$line(x1 = scale(0), x2 = scale(0), y1 = 0, y2 = svg_height, stroke = "#888", "stroke-dasharray" = "2,2", "stroke-width" = 1),
-        axis_svg
-      )
-    )
-    
-    if (!is.null(tooltip_html) && tooltip_html != "" && hover_enabled) {
-      return(sprintf(
-        '<div class="forest-tooltip" style="cursor: pointer; height: 100%%; position: relative;">
-        %s
-        <div class="tooltip-content" id="tooltip-%s">%s</div>
-      </div>', 
-        svg_content, 
-        sample(1:999999, 1),
-        tooltip_html
-      ))
-    } else {
-      return(svg_content)
-    }
-  }
-  
-  # 5. FILTERED DATA REACTIVE
-  filtered_merged_forest <- reactive({
-    filtered <- filtered_data()
-    if (nrow(filtered) == 0) {
-      tibble(
-        `Study Author Year` = character(),
-        `Intervention` = character(),
-        `Comparison` = character(),
-        `Outcome Measure` = character(),
-        `Weeks` = character(),
-        `n` = numeric(),
-        `SMD` = numeric(),
-        lower = numeric(),
-        upper = numeric(),
-        processed_grades = list(),
-        processed_school_types = list(),
-        outcome_measure = character()
-      )
-    } else {
-      se <- sqrt(filtered$vi)
-      filtered$lower <- filtered$yi - 1.96 * se
-      filtered$upper <- filtered$yi + 1.96 * se
-      
-      filtered_forest <- filtered %>%
-        transmute(
-          `Study Author Year` = study,
-          `Intervention` = intervention,
-          `Comparison` = comparison,
-          `Outcome Domain` = outcome_domain,        
-          `Outcome Measure` = outcome_measure,
-          `Weeks` = as.character(outcome_timepoint),
-          `n` = number_participants,
-          `SMD` = round(yi, 3),
-          lower = lower,
-          upper = upper,
-          processed_grades = processed_grades,
-          processed_school_types = processed_school_types,
-          outcome_measure_specific = outcome_measure,
-          country = if("country" %in% names(filtered)) country else NA_character_,
-          school_level_computed = if("grade_level" %in% names(filtered)) sapply(grade_level, classify_grade_level) else NA_character_,
-          urbanicity_computed = if("urbanicity" %in% names(filtered)) sapply(urbanicity, clean_urbanicity) else NA_character_,
-          number_schools = if("number_schools" %in% names(filtered)) number_schools else NA_real_,
-          number_classrooms = if("number_classrooms" %in% names(filtered)) number_classrooms else NA_real_,
-          number_participants = number_participants,
-          average_age = if("average_age" %in% names(filtered)) average_age else NA_real_,
-          percent_female = if("percent_female" %in% names(filtered)) percent_female else NA_real_,
-          percent_FRPL = if("percent_FRPL" %in% names(filtered)) percent_FRPL else NA_real_,
-          percent_ELL = if("percent_ELL" %in% names(filtered)) percent_ELL else NA_real_,
-          percent_white = if("percent_white" %in% names(filtered)) percent_white else NA_real_,
-          percent_black = if("percent_black" %in% names(filtered)) percent_black else NA_real_,
-          percent_aian = if("percent_aian" %in% names(filtered)) percent_aian else NA_real_,
-          percent_nhpi = if("percent_nhpi" %in% names(filtered)) percent_nhpi else NA_real_,
-          percent_asian = if("percent_asian" %in% names(filtered)) percent_asian else NA_real_,
-          percent_latinx = if("percent_latinx" %in% names(filtered)) percent_latinx else NA_real_,
-          percent_other = if("percent_other" %in% names(filtered)) percent_other else NA_real_
-        )
-      filtered_forest
-    }
-  })
-  
-  # 6. MAIN FOREST PLOT OUTPUT
-  ##################################################################################
-  ### Forest Plot Code with Hover Tooltips for Blank Cells
-  ###################################################################################
-  
-  # 1. HELPER FUNCTIONS (define these first)
-  safe_format_list <- function(list_value, default_text = "Not specified") {
-    tryCatch({
-      if (is.null(list_value) || length(list_value) == 0) {
-        return(default_text)
-      }
-      if (is.list(list_value) && length(list_value) == 1) {
-        list_value <- list_value[[1]]
-      }
-      if (length(list_value) == 0 || all(is.na(list_value))) {
-        return(default_text)
-      }
-      clean_values <- as.character(list_value[!is.na(list_value)])
-      if (length(clean_values) == 0) {
-        return(default_text)
-      }
-      return(paste(clean_values, collapse = ", "))
-    }, error = function(e) {
-      return(default_text)
-    })
-  }
-  
-  format_viz_value <- function(value, is_percentage = FALSE, default_text = "Not specified") {
-    tryCatch({
-      if (is.null(value) || length(value) == 0) {
-        return(default_text)
-      }
-      if (is.na(value) || value == -999 || value == "" || value == "NA") {
-        return(default_text)
-      }
-      if (is_percentage && is.numeric(value)) {
-        return(paste0(round(value * 100, 1), "%"))
-      }
-      if (is.numeric(value)) {
-        return(as.character(round(value, 1)))
-      }
-      return(as.character(value))
-    }, error = function(e) {
-      return(default_text)
-    })
-  }
-  
-  format_race_ethnicity_breakdown <- function(white, black, aian, nhpi, asian, latinx, other) {
-    tryCatch({
-      race_components <- c()
-      if (!is.na(white) && white != -999 && white > 0) {
-        race_components <- c(race_components, paste0("White: ", round(white * 100, 1), "%"))
-      }
-      if (!is.na(black) && black != -999 && black > 0) {
-        race_components <- c(race_components, paste0("Black: ", round(black * 100, 1), "%"))
-      }
-      if (!is.na(aian) && aian != -999 && aian > 0) {
-        race_components <- c(race_components, paste0("AIAN: ", round(aian * 100, 1), "%"))
-      }
-      if (!is.na(nhpi) && nhpi != -999 && nhpi > 0) {
-        race_components <- c(race_components, paste0("NHPI: ", round(nhpi * 100, 1), "%"))
-      }
-      if (!is.na(asian) && asian != -999 && asian > 0) {
-        race_components <- c(race_components, paste0("Asian: ", round(asian * 100, 1), "%"))
-      }
-      if (!is.na(latinx) && latinx != -999 && latinx > 0) {
-        race_components <- c(race_components, paste0("Latinx: ", round(latinx * 100, 1), "%"))
-      }
-      if (!is.na(other) && other != -999 && other > 0) {
-        race_components <- c(race_components, paste0("Other: ", round(other * 100, 1), "%"))
-      }
-      if (length(race_components) == 0) {
-        return("Not specified")
-      }
-      return(paste(race_components, collapse = ", "))
-    }, error = function(e) {
-      return("Not specified")
-    })
-  }
-  
-  format_processed_grades <- function(processed_grades) {
-    if (is.null(processed_grades) || is.na(processed_grades) || processed_grades == "" || processed_grades == "Unclear") {
-      return("Not specified")
-    }
-    grades <- unlist(strsplit(as.character(processed_grades), ","))
-    return(paste(grades, collapse = ", "))
-  }
-  
-  # NEW: Function to create cell with hover tooltip for original content
-  create_cell_with_hover <- function(display_text, original_text, column_name, row_index) {
-    cell_id <- paste0("cell_", column_name, "_", row_index)
-    
-    # If display text is empty/blank but original text exists, show tooltip
-    if ((is.null(display_text) || display_text == "" || is.na(display_text)) && 
-        !is.null(original_text) && original_text != "" && !is.na(original_text)) {
-      
-      return(sprintf(
-        '<div class="hover-cell" id="%s" data-original="%s" style="width: 100%%; height: 100%%; cursor: pointer; position: relative;">
-        <span class="display-text">%s</span>
-        <div class="cell-tooltip" style="display: none; position: fixed; z-index: 10000; background: white; color: black; padding: 10px; border-radius: 6px; font-size: 13px; max-width: 400px; box-shadow: 0 4px 8px rgba(0,0,0,0.2); white-space: normal; line-height: 1.4; border: 1px solid #ccc; pointer-events: none;">%s</div>
-      </div>',
-        cell_id,
-        htmltools::htmlEscape(as.character(original_text)),
-        htmltools::htmlEscape(as.character(display_text)),
-        htmltools::htmlEscape(as.character(original_text))
-      ))
-    } else {
-      # Regular cell without hover
-      return(htmltools::htmlEscape(as.character(display_text)))
-    }
-  }
-  
-  # 2. HIERARCHICAL BLANKING FUNCTION
-  hierarchical_blanker <- function(merged, group_cols) {
-    n <- nrow(merged)
-    if (n < 2) return(merged)
-    original <- merged
-    merged$border_top <- FALSE
-    
-    for (i in 2:n) {
-      first_diff_col <- NA
-      for (col_idx in seq_along(group_cols)) {
-        col <- group_cols[col_idx]
-        if (!identical(original[[col]][i], original[[col]][i-1])) {
-          first_diff_col <- col_idx
-          break
-        }
-      }
-      
-      if (!is.na(first_diff_col) && first_diff_col == 1) {
-        merged$border_top[i] <- TRUE
-      }
-      
-      if (is.na(first_diff_col)) {
-        for (col_idx in seq_along(group_cols)) {
-          col <- group_cols[col_idx]
-          merged[[col]][i] <- ""
-        }
-      } else {
-        if (first_diff_col > 1) {
-          for (col_idx in 1:(first_diff_col-1)) {
-            col <- group_cols[col_idx]
-            merged[[col]][i] <- ""
-          }
-        }
-      }
-    }
-    merged
-  }
-  
-  # 3. ROW HEIGHT CALCULATION
-  calculate_dynamic_row_height <- function(merged_forest) {
-    if (nrow(merged_forest) == 0) return(80)
-    
-    text_complexity <- sapply(1:nrow(merged_forest), function(i) {
-      text_lengths <- c(
-        nchar(as.character(merged_forest$`Study Author Year`[i])),
-        nchar(as.character(merged_forest$Intervention[i])),
-        nchar(as.character(merged_forest$Comparison[i])),
-        nchar(as.character(merged_forest$`Outcome Measure`[i]))
-      )
-      weighted_lengths <- text_lengths / c(20, 25, 20, 30)
-      max(weighted_lengths, na.rm = TRUE)
-    })
-    
-    base_height <- 80
-    content_factor <- pmax(1, text_complexity)
-    heights <- base_height + (content_factor - 1) * 25
-    heights <- pmax(80, pmin(heights, 200))
-    
-    return(round(mean(heights)))
-  }
-  
-  # 4. FOREST SVG FUNCTION 
-  make_forest_svg <- function(yi, lower, upper, n, max_n = NULL, row_height = 70, show_axis = FALSE, tooltip_html = NULL, hover_enabled = TRUE) {
-    min_x <- -3.5; max_x <- 3.5
-    ref_width <- 500
-    svg_height <- if (show_axis) 48 else row_height
-    center_y <- svg_height / 2
-    
-    bubble_radius <- function(n, min_r = 2, max_r = 8) {
-      if (is.na(n) || n <= 0 || is.na(max_n) || max_n == 0) return(min_r)
-      prop <- sqrt(n / max_n)
-      r <- min_r + (max_r - min_r) * prop
-      return(r)
-    }
-    r <- bubble_radius(n)
-    
-    scale <- function(x) ref_width * (x - min_x) / (max_x - min_x)
-    
-    axis_svg <- if (show_axis) {
-      axis_y <- 25
-      tick_label_y <- 45
-      axis_label_y <- 10
-      ticks <- seq(-3, 3, by = 1)
-      tick_x <- scale(ticks)
-      axis_g <- htmltools::tagList(
-        htmltools::tags$line(
-          x1 = scale(min_x), x2 = scale(max_x), y1 = axis_y, y2 = axis_y,
-          stroke = "#444", "stroke-width" = 2
-        ),
-        lapply(seq_along(tick_x), function(i) {
-          htmltools::tags$g(
-            htmltools::tags$line(
-              x1 = tick_x[i], x2 = tick_x[i], y1 = axis_y, y2 = axis_y + 8,
-              stroke = "#444", "stroke-width" = 2
-            ),
-            htmltools::tags$text(
-              x = tick_x[i], y = tick_label_y,
-              text.anchor = "middle", font.size = 13, font.family = "Arial",
-              fill = "#333", font.weight = "bold", ticks[i]
-            )
-          )
-        }),
-        htmltools::tags$text(
-          x = ref_width / 2, y = axis_label_y,
-          "Standardized Mean Difference",
-          font.size = 14, font.family = "Arial", text.anchor = "middle",
-          fill = "#333", font.weight = "bold"
-        )
-      )
-      htmltools::tags$g(axis_g)
-    } else {
-      NULL
-    }
-    
-    forest_geom <- NULL
-    if (!is.na(yi) && !is.na(lower) && !is.na(upper) && !is.na(n)) {
-      forest_geom <- list(
-        htmltools::tags$line(
-          x1 = scale(lower), x2 = scale(upper), y1 = center_y, y2 = center_y,
-          stroke = "#333", "stroke-width" = 2
-        ),
-        htmltools::tags$circle(
-          cx = scale(yi), cy = center_y, r = r,
-          fill = ifelse(yi < -0.03, "#007030",
+          fill = ifelse(yi < -0.03, "#235223",
                         ifelse(yi > 0.03, "#E0C311", "#B0B0B0")),
           stroke = "#222", "stroke-width" = 1
         )
@@ -2997,32 +2353,12 @@ server <- function(input, output, session) {
     max_n <- GLOBAL_MAX_N
     hover_state <- hover_enabled()
     
-    # If no data, return empty reactable with message
+    # If no data, show a simple message instead of a table
     if (nrow(merged_forest) == 0) {
-      empty_data <- tibble(
-        Message = "No studies meet selected filters."
-      )
       return(
-        reactable(
-          empty_data,
-          columns = list(
-            Message = colDef(
-              name = "",
-              style = list(
-                textAlign = "center",
-                fontSize = "1.5em",
-                color = "#333",
-                padding = "60px"
-              ),
-              headerStyle = list(display = "none")
-            )
-          ),
-          showPagination = FALSE,
-          style = list(
-            border = "none"
-          ),
-          bordered = FALSE,
-          highlight = FALSE
+        htmltools::div(
+          style = "padding: 60px; text-align: center; font-size: 1.5em; color: #333;",
+          "No studies meet selected filters."
         )
       )
     }
@@ -3034,12 +2370,11 @@ server <- function(input, output, session) {
         merged_forest <- merged_forest[do.call(order, merged_forest[group_cols]), ]
       }
       
-      # Store original data BEFORE blanking for tooltips
       original_forest_pre_blank <- merged_forest
       merged_forest <- hierarchical_blanker(merged_forest, group_cols)
       row_height <- calculate_dynamic_row_height(merged_forest)
       
-      # Create tooltips for SVG
+      # Create tooltips
       tooltip_html_texts <- sapply(1:nrow(merged_forest), function(i) {
         tryCatch({
           orig_data <- original_forest_pre_blank[i, ]
@@ -3110,25 +2445,25 @@ server <- function(input, output, session) {
       
       display_cols <- c(
         "Study Author Year", "Intervention", "Comparison", 
-        "Outcome Domain", "Outcome Measure", "Weeks", "SMD", " ", "border_top"
+        "Outcome Domain",       # <-- NEW COLUMN
+        "Outcome Measure", "Weeks", "SMD", " ", "border_top"
       )
       merged_forest <- merged_forest[, display_cols, drop = FALSE]
       merged_forest <- tibble::as_tibble(merged_forest)
     }
     
-    # Reactable with hover-enabled cells
-    rt <- reactable(
+    
+    # Reactable with all styling
+    # Updated reactable with responsive column widths
+    # Updated reactable with proper numeric widths
+    reactable(
       merged_forest,
       columns = list(
         `Study Author Year` = colDef(
           name = "Study Author Year",
           minWidth = 150,
+          # Remove width to allow flex sizing
           sortable = FALSE,
-          html = TRUE,
-          cell = function(value, index) {
-            original_value <- original_forest_pre_blank$`Study Author Year`[index]
-            create_cell_with_hover(value, original_value, "study", index)
-          },
           style = function(value, index) {
             style_list <- list(
               whiteSpace = "normal",
@@ -3148,12 +2483,8 @@ server <- function(input, output, session) {
         `Intervention` = colDef(
           name = "Intervention",
           minWidth = 220,
+          # Remove width to allow flex sizing
           sortable = FALSE,
-          html = TRUE,
-          cell = function(value, index) {
-            original_value <- original_forest_pre_blank$Intervention[index]
-            create_cell_with_hover(value, original_value, "intervention", index)
-          },
           style = function(value, index) {
             style_list <- list(
               whiteSpace = "normal",
@@ -3173,12 +2504,8 @@ server <- function(input, output, session) {
         `Comparison` = colDef(
           name = "Comparison",
           minWidth = 120,
+          # Remove width to allow flex sizing
           sortable = FALSE,
-          html = TRUE,
-          cell = function(value, index) {
-            original_value <- original_forest_pre_blank$Comparison[index]
-            create_cell_with_hover(value, original_value, "comparison", index)
-          },
           style = function(value, index) {
             style_list <- list(
               whiteSpace = "normal",
@@ -3199,11 +2526,6 @@ server <- function(input, output, session) {
           name = "Outcome Domain",
           minWidth = 160,
           sortable = FALSE,
-          html = TRUE,
-          cell = function(value, index) {
-            original_value <- original_forest_pre_blank$`Outcome Domain`[index]
-            create_cell_with_hover(value, original_value, "domain", index)
-          },
           style = function(value, index) {
             style_list <- list(
               whiteSpace = "normal",
@@ -3223,12 +2545,29 @@ server <- function(input, output, session) {
         `Outcome Measure` = colDef(
           name = "Outcome Measure",
           minWidth = 200,
+          # Remove width to allow flex sizing
           sortable = FALSE,
-          html = TRUE,
-          cell = function(value, index) {
-            original_value <- original_forest_pre_blank$`Outcome Measure`[index]
-            create_cell_with_hover(value, original_value, "measure", index)
+          style = function(value, index) {
+            style_list <- list(
+              whiteSpace = "normal",
+              wordWrap = "break-word",
+              lineHeight = "1.4",
+              padding = "12px",
+              fontSize = "13px",
+              verticalAlign = "top"
+            )
+            if (!is.null(merged_forest$border_top) && length(merged_forest$border_top) >= index && merged_forest$border_top[index]) {
+              style_list$borderTop <- "2px solid #ccc"
+            }
+            style_list
           },
+          headerStyle = list(borderBottom = "3px solid #333", borderTop = "3px solid #333")
+        ),
+        `Outcome Measure` = colDef(
+          name = "Outcome Measure",
+          minWidth = 200,
+          # Remove width to allow flex sizing
+          sortable = FALSE,
           style = function(value, index) {
             style_list <- list(
               whiteSpace = "normal",
@@ -3247,7 +2586,7 @@ server <- function(input, output, session) {
         ),
         `Weeks` = colDef(
           name = "Weeks",
-          width = 70,
+          width = 70,  # Keep small fixed width for this column
           sortable = FALSE,
           style = function(value, index) {
             style_list <- list(
@@ -3265,7 +2604,7 @@ server <- function(input, output, session) {
         ),
         `SMD` = colDef(
           name = "SMD",
-          width = 80,
+          width = 80,  # Keep small fixed width for this column
           sortable = FALSE,
           style = function(value, index) {
             style_list <- list(
@@ -3283,6 +2622,7 @@ server <- function(input, output, session) {
         ),
         ` ` = colDef(
           html = TRUE,
+          # Use a flex value to take up remaining space (approximately 25% of total)
           minWidth = 400,
           maxWidth = 800,
           sortable = FALSE,
@@ -3307,8 +2647,7 @@ server <- function(input, output, session) {
             padding = "0px",
             verticalAlign = "top",
             background = "#fff"
-          )
-        ),
+          )        ),
         border_top = colDef(show = FALSE)
       ),
       bordered = TRUE,
@@ -3330,124 +2669,6 @@ server <- function(input, output, session) {
       fullWidth = TRUE,
       defaultPageSize = nrow(merged_forest)
     )
-    
-    # Add JavaScript for hover functionality that integrates with your toggle
-    shinyjs::runjs('
-    // Add CSS styles for hover tooltips
-    if (!document.getElementById("forest-hover-styles")) {
-      const style = document.createElement("style");
-      style.id = "forest-hover-styles";
-      style.textContent = `
-        .hover-cell {
-          width: 100% !important;
-          height: 100% !important;
-          position: relative;
-          padding: 8px;
-          box-sizing: border-box;
-        }
-        
-        .cell-tooltip {
-          display: none !important;
-          position: fixed !important;
-          z-index: 10000 !important;
-          background: white !important;
-          color: black !important;
-          padding: 15px !important;
-          border-radius: 8px !important;
-          font-size: 13px !important;
-          min-width: 200px !important;
-          max-width: 500px !important;
-          box-shadow: 0 4px 12px rgba(0,0,0,0.3) !important;
-          white-space: normal !important;
-          line-height: 1.5 !important;
-          border: 2px solid #333 !important;
-          pointer-events: none !important;
-          word-wrap: break-word !important;
-        }
-        
-        /* Show tooltips only when hover is enabled */
-        body:not(.hover-disabled) .hover-cell:hover {
-          cursor: pointer !important;
-        }
-        
-        body:not(.hover-disabled) .hover-cell:hover .cell-tooltip {
-          display: block !important;
-        }
-        
-        /* Hide tooltips when hover is disabled */
-        body.hover-disabled .hover-cell {
-          cursor: default !important;
-        }
-        
-        body.hover-disabled .cell-tooltip {
-          display: none !important;
-        }
-      `;
-      document.head.appendChild(style);
-    }
-    
-    // Position tooltip function
-    function positionTooltip(tooltip, event) {
-      const viewportWidth = window.innerWidth;
-      const viewportHeight = window.innerHeight;
-      
-      // Make tooltip visible to measure dimensions
-      tooltip.style.visibility = "hidden";
-      tooltip.style.display = "block";
-      tooltip.style.left = "-9999px";
-      tooltip.style.top = "-9999px";
-      
-      const rect = tooltip.getBoundingClientRect();
-      const tooltipWidth = rect.width;
-      const tooltipHeight = rect.height;
-      
-      // Calculate position (to the right and above cursor)
-      let x = event.clientX + 10;
-      let y = event.clientY - tooltipHeight - 10;
-      
-      // Adjust if tooltip goes off right edge
-      if (x + tooltipWidth > viewportWidth) {
-        x = event.clientX - tooltipWidth - 10;
-      }
-      
-      // Adjust if tooltip goes off left edge  
-      if (x < 10) {
-        x = 10;
-      }
-      
-      // Adjust if tooltip goes off top edge
-      if (y < 10) {
-        y = event.clientY + 20;
-      }
-      
-      // Adjust if tooltip goes off bottom edge
-      if (y + tooltipHeight > viewportHeight) {
-        y = viewportHeight - tooltipHeight - 10;
-      }
-      
-      tooltip.style.left = x + "px";
-      tooltip.style.top = y + "px";
-      tooltip.style.visibility = "visible";
-    }
-    
-    // Mouse move event for tooltip positioning
-    document.addEventListener("mousemove", function(event) {
-      if (!document.body.classList.contains("hover-disabled")) {
-        // Find visible cell tooltips
-        document.querySelectorAll(".cell-tooltip").forEach(function(tooltip) {
-          const computedStyle = window.getComputedStyle(tooltip);
-          if (computedStyle.display === "block") {
-            const parent = tooltip.closest(".hover-cell");
-            if (parent && parent.matches(":hover")) {
-              positionTooltip(tooltip, event);
-            }
-          }
-        });
-      }
-    });
-  ')
-    
-    return(rt)
   })
 }
 # Run the application 
